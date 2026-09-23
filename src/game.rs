@@ -6,7 +6,7 @@
 
 use std::mem::{offset_of, size_of};
 
-use crate::overlay::{IconRenderInfo, Real2, Real4x4};
+use crate::overlay::{CircleRenderInfo, IconRenderInfo, Real2, Real4x4};
 use crate::symbols::Symbols;
 use crate::{Result, log};
 
@@ -16,6 +16,7 @@ pub struct Layout {
     pub render_game: usize,
     pub begin_trace_stage: usize,
     pub draw_cell_icons: usize,
+    pub draw_circles: usize,
 
     /// The global `world w`.
     pub world: usize,
@@ -26,10 +27,14 @@ pub struct Layout {
     /// in `world`.
     pub explored: usize,
     pub map_range: MapRange,
+    /// `w.frame_number` (`int`), which drives the combo pickups' color cycle.
+    pub frame_number: usize,
 
     pub pickup_size: usize,
     pub pickup_material_index: usize,
     pub pickup_x: usize,
+    /// The `is_combo` bitfield: byte offset of its `u32` storage and bit position.
+    pub pickup_is_combo: (usize, u32),
 
     /// Globals `material_t* materials_list` and `int n_materials`.
     pub materials_list: usize,
@@ -82,6 +87,7 @@ impl Layout {
             render_game: symbols.address("render_game")?,
             begin_trace_stage: symbols.address("begin_trace_stage")?,
             draw_cell_icons: symbols.address("draw_cell_icons")?,
+            draw_circles: symbols.address("draw_circles")?,
 
             world: symbols.address("w")?,
             cell_pickups: world.offset("cell_pickups")?,
@@ -93,10 +99,12 @@ impl Layout {
                 upper_x: range + upper,
                 upper_y: range + upper + 4,
             },
+            frame_number: world.offset("frame_number")?,
 
             pickup_size: pickup.size,
             pickup_material_index: pickup.offset("material_index")?,
             pickup_x: pickup.offset("x")?,
+            pickup_is_combo: pickup.flag("is_combo")?,
 
             materials_list: symbols.address("materials_list")?,
             n_materials: symbols.address("n_materials")?,
@@ -124,6 +132,12 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && icon.offset("color")? == offset_of!(IconRenderInfo, color)
         && icon.offset("uv")? == offset_of!(IconRenderInfo, uv);
     expect(matches, "icon_render_info layout changed")?;
+    let circle = symbols.layout("circle_render_info")?;
+    let matches = circle.size == size_of::<CircleRenderInfo>()
+        && circle.offset("x")? == offset_of!(CircleRenderInfo, x)
+        && circle.offset("r")? == offset_of!(CircleRenderInfo, r)
+        && circle.offset("color")? == offset_of!(CircleRenderInfo, color);
+    expect(matches, "circle_render_info layout changed")?;
     expect(symbols.layout("real_2")?.size == size_of::<Real2>(), "real_2 size changed")?;
     expect(symbols.layout("real_4x4")?.size == size_of::<Real4x4>(), "real_4x4 size changed")?;
     Ok(())

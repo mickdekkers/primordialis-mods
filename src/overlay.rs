@@ -1,5 +1,7 @@
 //! Draws the icon of every cell pickup in explored areas while the map is open, using the game's own
 //! icon renderer (`draw_cell_icons`), so the icons look exactly like the ones on pickups in the world.
+//! Combo pickups also get a ring of rainbow dots (`draw_circles`), standing in for the particle ring
+//! the game shows around them in the world, which only exists near the player.
 
 use std::cell::RefCell;
 use std::ptr;
@@ -17,6 +19,23 @@ const EXPLORED_MIN: f32 = 0.3;
 const EXPLORED_FULL: f32 = 0.6;
 /// Below this map fade value the map is effectively closed.
 const MIN_MAP_ALPHA: f32 = 0.01;
+
+/// Combo pickups don't use their material's color: the game cycles them through a dim rainbow,
+/// `COMBO_BASE + COMBO_AMPLITUDE * cos(frame_number * COMBO_SPEED + phase)` for red, green and blue,
+/// with green and blue phase-shifted by 2/3 and 1/3 of a cycle. These are constants in
+/// `render_game`'s code (not symbols), taken from the current build.
+const COMBO_BASE: f32 = 0.35;
+const COMBO_AMPLITUDE: f32 = 0.05;
+const COMBO_SPEED: f32 = 0.02;
+
+/// The ring of dots around combo pickups, in multiples of the icon radius.
+const HALO_RADIUS: f32 = 1.7;
+const HALO_DOT_RADIUS: f32 = 0.14;
+const HALO_DOTS: usize = 16;
+/// Ring rotation, in radians per frame.
+const HALO_SPIN: f32 = 0.0053;
+/// Dot opacity relative to the icon's.
+const HALO_ALPHA: f32 = 0.9;
 
 /// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r).
 const HEX_SPACING: f32 = 200.0;
@@ -48,13 +67,31 @@ pub struct IconRenderInfo {
     pub uv: [f32; 2],
 }
 
+/// The game's `circle_render_info`: one filled circle for `draw_circles`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct CircleRenderInfo {
+    pub x: [f32; 3],
+    pub r: f32,
+    pub color: [f32; 4],
+}
+
 /// `void draw_cell_icons(icon_render_info*, int, real_4x4, real_2)`. The x64 ABI passes the 64-byte
 /// matrix by reference and the 8-byte `real_2` by value in a register, which is what these Rust types
 /// produce as well.
 type DrawCellIcons = unsafe extern "C" fn(*const IconRenderInfo, i32, *const Real4x4, Real2);
+/// `void draw_circles(circle_render_info*, int, real_4x4)`, with the matrix passed by reference.
+type DrawCircles = unsafe extern "C" fn(*const CircleRenderInfo, i32, *const Real4x4);
+
+/// Per-frame buffers, reused to avoid allocating every frame.
+#[derive(Default)]
+struct Buffers {
+    icons: Vec<IconRenderInfo>,
+    halo_dots: Vec<CircleRenderInfo>,
+}
 
 thread_local! {
-    static ICONS: RefCell<Vec<IconRenderInfo>> = const { RefCell::new(Vec::new()) };
+    static BUFFERS: RefCell<Buffers> = RefCell::new(Buffers::default());
 }
 
 static LOGGED_FIRST_DRAW: AtomicBool = AtomicBool::new(false);
@@ -104,9 +141,14 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
             return;
         };
         let radius = ICON_SCREEN_RADIUS * units_per_ndc;
+        let frame_number = read::<i32>(world + layout.frame_number);
+        let combo_rgb = combo_color(frame_number);
+        let (combo_flags, combo_bit) = layout.pickup_is_combo;
+        let halo = Halo::new(frame_number, radius);
 
-        ICONS.with_borrow_mut(|icons| {
+        BUFFERS.with_borrow_mut(|Buffers { icons, halo_dots }| {
             icons.clear();
+            halo_dots.clear();
             for i in 0..count as usize {
                 let pickup = pickups + i * layout.pickup_size;
                 let material_index = read::<i32>(pickup + layout.pickup_material_index);
@@ -120,6 +162,10 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
                 }
                 let material = materials + material_index as usize * layout.material_size;
                 let mut color = read::<[f32; 4]>(material + layout.material_base_color);
+                let is_combo = read::<u32>(pickup + combo_flags) & (1 << combo_bit) != 0;
+                if is_combo {
+                    color[..3].copy_from_slice(&combo_rgb);
+                }
                 color[3] = color[3].clamp(0.0, 1.0) * fade * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
                 icons.push(IconRenderInfo {
                     x: [pos.x, pos.y, 0.0],
@@ -127,13 +173,22 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
                     color,
                     uv: read(material + layout.material_uv),
                 });
+                if is_combo {
+                    halo.add(halo_dots, pos, color[3] * HALO_ALPHA);
+                }
             }
 
             if !LOGGED_FIRST_DRAW.swap(true, Ordering::Relaxed) {
                 log::info(&format!(
-                    "first map draw: {} of {count} pickups in explored areas, icon radius {radius:.1} world units",
-                    icons.len()
+                    "first map draw: {} of {count} pickups in explored areas ({} combo), icon radius {radius:.1} \
+                     world units",
+                    icons.len(),
+                    halo_dots.len() / HALO_DOTS
                 ));
+            }
+            if !halo_dots.is_empty() {
+                let draw_circles: DrawCircles = std::mem::transmute(layout.draw_circles);
+                draw_circles(halo_dots.as_ptr(), halo_dots.len() as i32, &camera);
             }
             if icons.is_empty() {
                 return;
@@ -204,6 +259,49 @@ fn hex_at(pos: Real2) -> (i32, i32) {
         rr = -rq - rs;
     }
     (rq as i32, rr as i32)
+}
+
+/// The ring of rainbow dots drawn around combo pickups for the current frame.
+struct Halo {
+    /// Dot offsets from the pickup's center, and their colors.
+    dots: [(Real2, [f32; 3]); HALO_DOTS],
+    dot_radius: f32,
+}
+
+impl Halo {
+    fn new(frame_number: i32, icon_radius: f32) -> Self {
+        use std::f32::consts::TAU;
+        let spin = (frame_number as f32 * HALO_SPIN) % TAU;
+        let dots = std::array::from_fn(|i| {
+            let along = i as f32 / HALO_DOTS as f32;
+            let angle = spin + along * TAU;
+            let distance = HALO_RADIUS * icon_radius;
+            let offset = Real2 { x: angle.cos() * distance, y: angle.sin() * distance };
+            (offset, rainbow(along))
+        });
+        Halo { dots, dot_radius: HALO_DOT_RADIUS * icon_radius }
+    }
+
+    fn add(&self, out: &mut Vec<CircleRenderInfo>, center: Real2, alpha: f32) {
+        out.extend(self.dots.iter().map(|&(offset, [r, g, b])| CircleRenderInfo {
+            x: [center.x + offset.x, center.y + offset.y, 0.0],
+            r: self.dot_radius,
+            color: [r, g, b, alpha],
+        }));
+    }
+}
+
+/// A light, saturated rainbow color, `t` going once around the hues from 0 to 1.
+fn rainbow(t: f32) -> [f32; 3] {
+    use std::f32::consts::TAU;
+    [0.0, 2.0 / 3.0, 1.0 / 3.0].map(|phase| 0.65 + 0.35 * ((t + phase) * TAU).cos())
+}
+
+/// The color the game gives combo pickups on a given frame.
+fn combo_color(frame_number: i32) -> [f32; 3] {
+    use std::f32::consts::TAU;
+    let t = frame_number as f32 * COMBO_SPEED;
+    [0.0, 2.0 / 3.0, 1.0 / 3.0].map(|phase| COMBO_BASE + COMBO_AMPLITUDE * (t + phase * TAU).cos())
 }
 
 fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {

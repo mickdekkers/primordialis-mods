@@ -3,6 +3,8 @@
 When you open the map, every cell pickup in an area you have explored is shown with its cell icon, so
 you can see *which* cells are lying around, not just where. The icons are drawn by the game's own icon
 renderer, so they look like the pickups do in the world, and they fade in and out with the map.
+Combo pickups get the game's combo coloring plus a ring of rainbow dots, standing in for the particle
+ring they have in the world.
 
 ## Install
 

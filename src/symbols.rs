@@ -67,7 +67,8 @@ struct Found {
 
 pub struct Field {
     pub offset: usize,
-    pub bit_position: Option<u32>,
+    /// For bitfields: the position of the lowest bit, and the number of bits.
+    pub bits: Option<(u32, u64)>,
 }
 
 pub struct TypeLayout {
@@ -79,10 +80,19 @@ pub struct TypeLayout {
 impl TypeLayout {
     pub fn offset(&self, field: &str) -> Result<usize> {
         let info = self.field(field)?;
-        if info.bit_position.is_some() {
+        if info.bits.is_some() {
             return Err(format!("{}.{field} is unexpectedly a bitfield", self.name));
         }
         Ok(info.offset)
+    }
+
+    /// Byte offset and bit position of a one-bit bitfield.
+    pub fn flag(&self, field: &str) -> Result<(usize, u32)> {
+        let info = self.field(field)?;
+        match info.bits {
+            Some((position, 1)) => Ok((info.offset, position)),
+            _ => Err(format!("{}.{field} is no longer a one-bit flag", self.name)),
+        }
     }
 
     fn field(&self, field: &str) -> Result<&Field> {
@@ -292,7 +302,7 @@ impl Symbols {
                 let symbol_name = std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
                 let symbol_name = String::from_utf16_lossy(symbol_name);
                 // Locals have no address; statics do.
-                if symbol_name.trim_end_matches(' ') == search.name && info.Address != 0 {
+                if symbol_name.trim_end_matches('\0') == search.name && info.Address != 0 {
                     search.found.push(Found { address: info.Address, type_id: info.TypeIndex });
                 }
             }
@@ -378,9 +388,13 @@ impl Symbols {
             if self.type_info(child, TI_GET_OFFSET, &mut offset).is_none() {
                 continue;
             }
-            let mut bit = 0u32;
-            let bit_position = self.type_info(child, TI_GET_BITPOSITION, &mut bit).map(|()| bit);
-            fields.insert(name, Field { offset: offset as usize, bit_position });
+            let mut position = 0u32;
+            let bits = match self.type_info(child, TI_GET_BITPOSITION, &mut position) {
+                // A bitfield member's length is its number of bits.
+                Some(()) => Some((position, self.type_length(child)? as u64)),
+                None => None,
+            };
+            fields.insert(name, Field { offset: offset as usize, bits });
         }
         Ok(TypeLayout { name: type_name.to_owned(), size, fields })
     }
