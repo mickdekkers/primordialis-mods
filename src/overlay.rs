@@ -32,7 +32,8 @@ const COMBO_SPEED: f32 = 0.02;
 const HALO_RADIUS: f32 = 1.7;
 const HALO_DOT_RADIUS: f32 = 0.14;
 const HALO_DOTS: usize = 16;
-/// Ring rotation, in radians per frame.
+/// Ring rotation, in radians per `frame_number` tick. Despite the name, `frame_number` counts
+/// simulation steps, which run at a fixed 120 per second regardless of frame rate: ~10 s per turn.
 const HALO_SPIN: f32 = 0.0053;
 /// Dot opacity relative to the icon's.
 const HALO_ALPHA: f32 = 0.9;
