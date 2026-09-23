@@ -32,9 +32,10 @@ const COMBO_SPEED: f32 = 0.02;
 const HALO_RADIUS: f32 = 1.7;
 const HALO_DOT_RADIUS: f32 = 0.14;
 const HALO_DOTS: usize = 16;
-/// Ring rotation, in radians per `frame_number` tick. Despite the name, `frame_number` counts
-/// simulation steps, which run at a fixed 120 per second regardless of frame rate: ~10 s per turn.
-const HALO_SPIN: f32 = 0.0053;
+/// Clockwise ring rotation, in radians per `frame_number` tick. Despite the name, `frame_number`
+/// counts simulation steps, which run at a fixed 120 per second regardless of frame rate: ~20 s per
+/// turn.
+const HALO_SPIN: f32 = 0.00265;
 /// Dot opacity relative to the icon's.
 const HALO_ALPHA: f32 = 0.9;
 
@@ -275,7 +276,8 @@ impl Halo {
         let spin = (frame_number as f32 * HALO_SPIN) % TAU;
         let dots = std::array::from_fn(|i| {
             let along = i as f32 / HALO_DOTS as f32;
-            let angle = spin + along * TAU;
+            // World y points up on screen, so decreasing angles turn clockwise.
+            let angle = along * TAU - spin;
             let distance = HALO_RADIUS * icon_radius;
             let offset = Real2 { x: angle.cos() * distance, y: angle.sin() * distance };
             (offset, rainbow(along))
