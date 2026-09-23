@@ -2,8 +2,15 @@
 //! icon renderer (`draw_cell_icons`), so the icons look exactly like the ones on pickups in the world.
 //! Combo pickups also get a ring of rainbow dots (`draw_circles`), standing in for the particle ring
 //! the game shows around them in the world, which only exists near the player.
+//!
+//! The game only simulates pickups near the camera. Far away, a pickup stays where map generation
+//! put it, which can be inside rock; once simulated, the physics pushes it out to the wall surface.
+//! We apply the same push-out, so icons show where the pickups will actually be. Optionally, pickups
+//! are also moved there while the Echolocation mutation draws its markers, and moved back right after.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,6 +45,11 @@ const HALO_DOTS: usize = 16;
 const HALO_SPIN: f32 = 0.00265;
 /// Dot opacity relative to the icon's.
 const HALO_ALPHA: f32 = 0.9;
+
+/// The game's physics keeps pickups at least this fraction of their radius away from walls.
+const WALL_CLEARANCE: f32 = 0.5;
+/// The game pushes a pickup out of walls a step per tick; a few steps always get it clear.
+const MAX_PUSH_OUT_STEPS: usize = 8;
 
 /// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r).
 const HEX_SPACING: f32 = 200.0;
@@ -78,25 +90,63 @@ pub struct CircleRenderInfo {
     pub color: [f32; 4],
 }
 
+/// The game's `wall_t`: a sample of the wall distance field.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Wall {
+    /// Distance to the nearest wall surface: negative inside a wall.
+    pub dist: f32,
+    /// Unit direction away from the wall.
+    pub gradient: Real2,
+    pub flow: Real2,
+    pub air_dist: f32,
+}
+
 /// `void draw_cell_icons(icon_render_info*, int, real_4x4, real_2)`. The x64 ABI passes the 64-byte
 /// matrix by reference and the 8-byte `real_2` by value in a register, which is what these Rust types
 /// produce as well.
 type DrawCellIcons = unsafe extern "C" fn(*const IconRenderInfo, i32, *const Real4x4, Real2);
 /// `void draw_circles(circle_render_info*, int, real_4x4)`, with the matrix passed by reference.
 type DrawCircles = unsafe extern "C" fn(*const CircleRenderInfo, i32, *const Real4x4);
+/// `wall_t wall_map(map_t*, real_2, bool)`. The 24-byte `wall_t` is returned through a hidden pointer
+/// argument, which Rust does as well for this signature.
+type WallMap = unsafe extern "C" fn(*const c_void, Real2, bool) -> Wall;
 
 /// Per-frame buffers, reused to avoid allocating every frame.
 #[derive(Default)]
 struct Buffers {
     icons: Vec<IconRenderInfo>,
     halo_dots: Vec<CircleRenderInfo>,
+    resolved: Resolved,
+}
+
+/// Where pickups will be once the game's physics pushes them out of walls.
+#[derive(Default)]
+struct Resolved {
+    /// Pickup position and radius (as bits) to its pushed-out position. Pickups away from the camera
+    /// don't move, so this saves sampling walls for them every frame. Cleared whenever the map opens,
+    /// in case walls changed.
+    cache: HashMap<[u32; 3], Real2>,
+    map_open: bool,
+}
+
+/// Pickups moved out of walls for the Echolocation markers, to be moved back.
+#[derive(Default)]
+struct MovedPickups {
+    /// The pickup array and count they were moved in.
+    pickups: usize,
+    count: i32,
+    /// Address of each moved position, its original value, and what we wrote.
+    positions: Vec<(usize, Real2, Real2)>,
 }
 
 thread_local! {
     static BUFFERS: RefCell<Buffers> = RefCell::new(Buffers::default());
+    static MOVED: RefCell<MovedPickups> = RefCell::new(MovedPickups::default());
 }
 
 static LOGGED_FIRST_DRAW: AtomicBool = AtomicBool::new(false);
+static LOGGED_UNRESTORED: AtomicBool = AtomicBool::new(false);
 
 /// Reads a value of type `T` from game memory.
 ///
@@ -107,16 +157,126 @@ unsafe fn read<T: Copy>(address: usize) -> T {
     unsafe { ptr::read_unaligned(address as *const T) }
 }
 
+/// Writes a value of type `T` to game memory.
+///
+/// # Safety
+///
+/// `address` must be writable for `size_of::<T>()` bytes, and the game must accept the value.
+unsafe fn write<T: Copy>(address: usize, value: T) {
+    unsafe { ptr::write_unaligned(address as *mut T, value) }
+}
+
+impl Resolved {
+    /// Where the pickup at `pos` with radius `radius` will be once pushed out of walls.
+    ///
+    /// # Safety
+    ///
+    /// As `push_out_of_walls`.
+    unsafe fn get(&mut self, layout: &Layout, pos: Real2, radius: f32) -> Real2 {
+        let key = [pos.x.to_bits(), pos.y.to_bits(), radius.to_bits()];
+        *self.cache.entry(key).or_insert_with(|| {
+            // SAFETY: The layout's addresses are the game's `wall_map` and `w.map`.
+            unsafe {
+                let wall_map: WallMap = std::mem::transmute(layout.wall_map);
+                push_out_of_walls(wall_map, (layout.world + layout.map) as *const c_void, pos, radius)
+            }
+        })
+    }
+
+    /// Pickups near the camera move every frame, adding new entries; don't let them pile up.
+    fn trim(&mut self, pickup_count: usize) {
+        if self.cache.len() > 4 * pickup_count + 1024 {
+            self.cache.clear();
+        }
+    }
+}
+
+fn same_position(a: Real2, b: Real2) -> bool {
+    a.x.to_bits() == b.x.to_bits() && a.y.to_bits() == b.y.to_bits()
+}
+
+/// Moves pickups that are inside walls to where the game's physics will push them, until
+/// `restore_pickups`. Only the Echolocation markers are drawn in between, so it's the only thing
+/// that sees the moved positions.
+///
+/// # Safety
+///
+/// Must be called on the render thread during `render_game`, when nothing else accesses pickups.
+pub unsafe fn move_pickups_out_of_walls(layout: &Layout) {
+    unsafe {
+        restore_pickups(layout);
+        let count = read::<i32>(layout.world + layout.n_cell_pickups);
+        let pickups = read::<usize>(layout.world + layout.cell_pickups);
+        if count <= 0 || pickups == 0 {
+            return;
+        }
+        BUFFERS.with_borrow_mut(|Buffers { resolved, .. }| {
+            MOVED.with_borrow_mut(|moved| {
+                resolved.trim(count as usize);
+                moved.pickups = pickups;
+                moved.count = count;
+                for i in 0..count as usize {
+                    let pickup = pickups + i * layout.pickup_size;
+                    let address = pickup + layout.pickup_x;
+                    let original = read::<Real2>(address);
+                    let target = resolved.get(layout, original, read::<f32>(pickup + layout.pickup_r));
+                    if !same_position(original, target) {
+                        write(address, target);
+                        moved.positions.push((address, original, target));
+                    }
+                }
+            })
+        });
+    }
+}
+
+/// Moves pickups moved by `move_pickups_out_of_walls` back to their original positions.
+///
+/// # Safety
+///
+/// As `move_pickups_out_of_walls`.
+pub unsafe fn restore_pickups(layout: &Layout) {
+    MOVED.with_borrow_mut(|moved| {
+        if moved.positions.is_empty() {
+            return;
+        }
+        // SAFETY: Reads the game's pickup array, and only writes positions we moved within it.
+        unsafe {
+            let count = read::<i32>(layout.world + layout.n_cell_pickups);
+            let pickups = read::<usize>(layout.world + layout.cell_pickups);
+            // Nothing should change the pickups in between, but if something did, leave them be: a
+            // moved pickup is only where the physics would have put it anyway.
+            if pickups == moved.pickups && count == moved.count {
+                for &(address, original, written) in &moved.positions {
+                    if same_position(read(address), written) {
+                        write(address, original);
+                    }
+                }
+            } else if !LOGGED_UNRESTORED.swap(true, Ordering::Relaxed) {
+                log::warn("pickups changed while moved for Echolocation; left them at the moved positions");
+            }
+        }
+        moved.positions.clear();
+    });
+}
+
 /// Draws the overlay into the currently bound framebuffer.
 ///
 /// # Safety
 ///
 /// Must be called on the render thread during `render_game`, with `world_rc` being its world
 /// `render_context*`, while the UI framebuffer is bound.
-pub unsafe fn draw(layout: &Layout, world_rc: usize) {
+pub unsafe fn draw(layout: &Layout, world_rc: usize, fix_positions: bool) {
     unsafe {
         let fade = read::<f32>(layout.map_icon_alpha);
-        if fade.is_nan() || fade <= MIN_MAP_ALPHA {
+        let map_open = !fade.is_nan() && fade > MIN_MAP_ALPHA;
+        BUFFERS.with_borrow_mut(|Buffers { resolved, .. }| {
+            if map_open && !resolved.map_open {
+                resolved.cache.clear();
+            }
+            resolved.map_open = map_open;
+        });
+        if !map_open {
             return;
         }
 
@@ -148,16 +308,26 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
         let (combo_flags, combo_bit) = layout.pickup_is_combo;
         let halo = Halo::new(frame_number, radius);
 
-        BUFFERS.with_borrow_mut(|Buffers { icons, halo_dots }| {
+        BUFFERS.with_borrow_mut(|Buffers { icons, halo_dots, resolved }| {
             icons.clear();
             halo_dots.clear();
+            resolved.trim(count as usize);
+            let mut moved = 0;
             for i in 0..count as usize {
                 let pickup = pickups + i * layout.pickup_size;
                 let material_index = read::<i32>(pickup + layout.pickup_material_index);
                 if !(0..n_materials).contains(&material_index) {
                     continue;
                 }
-                let pos = read::<Real2>(pickup + layout.pickup_x);
+                let spawned_at = read::<Real2>(pickup + layout.pickup_x);
+                let pos = if fix_positions {
+                    resolved.get(layout, spawned_at, read::<f32>(pickup + layout.pickup_r))
+                } else {
+                    spawned_at
+                };
+                if !same_position(pos, spawned_at) {
+                    moved += 1;
+                }
                 let explored = grid.explored_at(pos);
                 if explored < EXPLORED_MIN {
                     continue;
@@ -182,8 +352,8 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
 
             if !LOGGED_FIRST_DRAW.swap(true, Ordering::Relaxed) {
                 log::info(&format!(
-                    "first map draw: {} of {count} pickups in explored areas ({} combo), icon radius {radius:.1} \
-                     world units",
+                    "first map draw: {} of {count} pickups in explored areas ({} combo, {moved} moved out of \
+                     walls), icon radius {radius:.1} world units",
                     icons.len(),
                     halo_dots.len() / HALO_DOTS
                 ));
@@ -202,6 +372,28 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize) {
             draw_cell_icons(icons.as_ptr(), icons.len() as i32, &camera, light);
         });
     }
+}
+
+/// Where the game's physics will move a pickup once it simulates it: out of any wall, along the wall
+/// distance field's gradient, until it's at least `WALL_CLEARANCE` of its radius from the surface.
+///
+/// # Safety
+///
+/// `wall_map` and `map` must be the game's `wall_map` function and `w.map`.
+unsafe fn push_out_of_walls(wall_map: WallMap, map: *const c_void, spawned_at: Real2, radius: f32) -> Real2 {
+    let clearance = WALL_CLEARANCE * radius;
+    let mut pos = spawned_at;
+    for _ in 0..MAX_PUSH_OUT_STEPS {
+        // SAFETY: Guaranteed by the caller. `true` is what the pickup physics passes as well.
+        let wall = unsafe { wall_map(map, pos, true) };
+        let depth = clearance - wall.dist;
+        if depth.is_nan() || depth <= 0.0 {
+            break;
+        }
+        pos.x += wall.gradient.x * depth;
+        pos.y += wall.gradient.y * depth;
+    }
+    if pos.x.is_finite() && pos.y.is_finite() { pos } else { spawned_at }
 }
 
 /// How many world units one unit of normalized device coordinates spans vertically, at the given

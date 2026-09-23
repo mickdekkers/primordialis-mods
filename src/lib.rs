@@ -5,6 +5,7 @@
 //! rendering functions, and draw the icons with the game's own icon renderer while the map is open.
 //! If anything doesn't match what we expect, we log why and leave the game unmodified.
 
+mod config;
 mod game;
 mod hooks;
 mod log;
@@ -48,6 +49,7 @@ fn init(module: HMODULE) -> Result<()> {
     let dll_dir = dll_path.parent().ok_or("DLL path has no parent directory")?.to_path_buf();
     log::init(&dll_dir.join("primordialis_qol.log"));
     log::info(&format!("primordialis_qol {} loaded from {}", env!("CARGO_PKG_VERSION"), dll_path.display()));
+    config::init(&dll_dir);
 
     let game_exe = module_path(std::ptr::null_mut())?;
     let game_dir = game_exe.parent().ok_or("game path has no parent directory")?;

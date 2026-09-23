@@ -6,6 +6,8 @@
 //!   when the profiler is on). When the "menus" stage starts, `render_game` has just drawn the other map
 //!   markers into the UI framebuffer, above the fog of war, and is about to draw menus on top. That's
 //!   where we draw. Anchoring on the stage name instead of a code address survives game updates.
+//!   With `fix_echolocation_positions`, pickups are also moved out of walls during the "racing_overlay" stage
+//!   before it, where the Echolocation mutation draws its markers.
 
 use std::cell::Cell;
 use std::ffi::{CStr, c_char, c_void};
@@ -16,10 +18,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use detour::GenericDetour;
 
 use crate::game::Layout;
-use crate::{Result, log, overlay};
+use crate::{Result, config, log, overlay};
 
 /// The rendering stage right before which the overlay is drawn.
 const DRAW_STAGE: &CStr = c"menus";
+/// The rendering stage in which the Echolocation mutation draws its markers (right before `DRAW_STAGE`).
+const ECHOLOCATION_STAGE: &CStr = c"racing_overlay";
 
 type RenderGame = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void, f32, *mut c_void);
 type BeginTraceStage = unsafe extern "C" fn(*const c_char);
@@ -82,10 +86,14 @@ extern "C" fn render_game_detour(
     dt: f32,
     window: *mut c_void,
 ) {
+    let hooks = hooks();
     let previous = WORLD_RC.replace(world_rc as usize);
     // SAFETY: Forwards the game's own arguments to the original function.
-    unsafe { hooks().render_game.call(world_rc, ui_rc, input, recording, dt, window) };
+    unsafe { hooks.render_game.call(world_rc, ui_rc, input, recording, dt, window) };
     WORLD_RC.set(previous);
+    // Pickups moved for Echolocation are normally moved back at the start of DRAW_STAGE; this is in
+    // case the game skipped it. SAFETY: Still on the render thread, and the game is done rendering.
+    run_guarded(|| unsafe { overlay::restore_pickups(&hooks.layout) });
 }
 
 extern "C" fn begin_trace_stage_detour(name: *const c_char) {
@@ -98,7 +106,17 @@ extern "C" fn begin_trace_stage_detour(name: *const c_char) {
         return;
     }
     // SAFETY: Stage names are NUL-terminated string literals.
-    if unsafe { CStr::from_ptr(name) } != DRAW_STAGE {
+    let name = unsafe { CStr::from_ptr(name) };
+    if name == ECHOLOCATION_STAGE {
+        if !config::current().fix_echolocation_positions {
+            return;
+        }
+        // SAFETY: We're inside `render_game` on the render thread, where only the Echolocation
+        // markers read pickups until DRAW_STAGE.
+        run_guarded(|| unsafe { overlay::move_pickups_out_of_walls(&hooks.layout) });
+        return;
+    }
+    if name != DRAW_STAGE {
         return;
     }
     if !LOGGED_DRAW_STAGE.swap(true, Ordering::Relaxed) {
@@ -109,9 +127,16 @@ extern "C" fn begin_trace_stage_detour(name: *const c_char) {
 
     // SAFETY: We're inside `render_game` on the render thread, with its world render context, at the
     // point where it draws UI-layer map markers.
-    let result = panic::catch_unwind(AssertUnwindSafe(|| unsafe { overlay::draw(&hooks.layout, world_rc) }));
-    if result.is_err() {
+    run_guarded(|| unsafe {
+        overlay::restore_pickups(&hooks.layout);
+        overlay::draw(&hooks.layout, world_rc, config::current().fix_icon_positions);
+    });
+}
+
+/// Runs overlay code, disabling the overlay if it panics rather than unwinding into the game.
+fn run_guarded(f: impl FnOnce()) {
+    if panic::catch_unwind(AssertUnwindSafe(f)).is_err() {
         OVERLAY_ENABLED.store(false, Ordering::Relaxed);
-        log::error("drawing the map overlay panicked; the overlay is disabled until the game restarts");
+        log::error("the map overlay panicked; it is disabled until the game restarts");
     }
 }

@@ -6,7 +6,7 @@
 
 use std::mem::{offset_of, size_of};
 
-use crate::overlay::{CircleRenderInfo, IconRenderInfo, Real2, Real4x4};
+use crate::overlay::{CircleRenderInfo, IconRenderInfo, Real2, Real4x4, Wall};
 use crate::symbols::Symbols;
 use crate::{Result, log};
 
@@ -17,12 +17,16 @@ pub struct Layout {
     pub begin_trace_stage: usize,
     pub draw_cell_icons: usize,
     pub draw_circles: usize,
+    /// `wall_t wall_map(map_t*, real_2, bool)`: the wall distance field the game's physics uses.
+    pub wall_map: usize,
 
     /// The global `world w`.
     pub world: usize,
     /// `w.cell_pickups` (`cell_pickup*`) and `w.n_cell_pickups` (`int`), as offsets in `world`.
     pub cell_pickups: usize,
     pub n_cell_pickups: usize,
+    /// `w.map` (`map_t`), as an offset in `world`.
+    pub map: usize,
     /// `w.map.explored` (`float*`, one value per map hex) and `w.map.map_range` (hex bounds), as offsets
     /// in `world`.
     pub explored: usize,
@@ -33,6 +37,7 @@ pub struct Layout {
     pub pickup_size: usize,
     pub pickup_material_index: usize,
     pub pickup_x: usize,
+    pub pickup_r: usize,
     /// The `is_combo` bitfield: byte offset of its `u32` storage and bit position.
     pub pickup_is_combo: (usize, u32),
 
@@ -88,10 +93,12 @@ impl Layout {
             begin_trace_stage: symbols.address("begin_trace_stage")?,
             draw_cell_icons: symbols.address("draw_cell_icons")?,
             draw_circles: symbols.address("draw_circles")?,
+            wall_map: symbols.address("wall_map")?,
 
             world: symbols.address("w")?,
             cell_pickups: world.offset("cell_pickups")?,
             n_cell_pickups: world.offset("n_cell_pickups")?,
+            map: map_offset,
             explored: map_offset + map.offset("explored")?,
             map_range: MapRange {
                 lower_x: range + lower,
@@ -104,6 +111,7 @@ impl Layout {
             pickup_size: pickup.size,
             pickup_material_index: pickup.offset("material_index")?,
             pickup_x: pickup.offset("x")?,
+            pickup_r: pickup.offset("r")?,
             pickup_is_combo: pickup.flag("is_combo")?,
 
             materials_list: symbols.address("materials_list")?,
@@ -138,6 +146,11 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && circle.offset("r")? == offset_of!(CircleRenderInfo, r)
         && circle.offset("color")? == offset_of!(CircleRenderInfo, color);
     expect(matches, "circle_render_info layout changed")?;
+    let wall = symbols.layout("wall_t")?;
+    let matches = wall.size == size_of::<Wall>()
+        && wall.offset("dist")? == offset_of!(Wall, dist)
+        && wall.offset("gradient")? == offset_of!(Wall, gradient);
+    expect(matches, "wall_t layout changed")?;
     expect(symbols.layout("real_2")?.size == size_of::<Real2>(), "real_2 size changed")?;
     expect(symbols.layout("real_4x4")?.size == size_of::<Real4x4>(), "real_4x4 size changed")?;
     Ok(())
