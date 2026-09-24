@@ -350,57 +350,13 @@ impl Symbols {
     /// name, and `address` would pick one of them arbitrarily; the parameter count tells them apart
     /// (and checks that a function without overloads still has the signature we call it with).
     pub fn function(&self, name: &str, params: usize) -> Result<usize> {
-        struct Search<'a> {
-            name: &'a str,
-            found: Vec<Found>,
-        }
-        unsafe extern "system" fn collect(
-            info: *const SYMBOL_INFOW,
-            _size: u32,
-            context: *const c_void,
-        ) -> BOOL {
-            // SAFETY: As in `function_static`.
-            unsafe {
-                let info = &*info;
-                let search = &mut *(context as *mut Search);
-                let symbol_name =
-                    std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
-                let symbol_name = String::from_utf16_lossy(symbol_name);
-                if info.Tag == SYM_TAG_FUNCTION
-                    && symbol_name.trim_end_matches('\0') == search.name
-                    && info.Address != 0
-                {
-                    search.found.push(Found {
-                        address: info.Address,
-                        type_id: info.TypeIndex,
-                    });
-                }
-            }
-            1
-        }
-
-        let mut search = Search {
-            name,
-            found: Vec::new(),
-        };
-        let wide_name = wide(name);
-        // SAFETY: As in `function_static`, enumerating the module's global symbols.
-        let ok = unsafe {
-            SymEnumSymbolsW(
-                SESSION,
-                self.base,
-                wide_name.as_ptr(),
-                Some(collect),
-                &mut search as *mut Search as *const c_void,
-            ) != 0
-        };
-        if !ok {
-            return Err(format!("cannot enumerate the functions named `{name}`"));
-        }
-        search.found.sort_by_key(|found| found.address);
-        search.found.dedup_by_key(|found| found.address);
+        let mut found = self
+            .enumerate(self.base, name, Some(SYM_TAG_FUNCTION))
+            .ok_or_else(|| format!("cannot enumerate the functions named `{name}`"))?;
+        found.sort_by_key(|found| found.address);
+        found.dedup_by_key(|found| found.address);
         let mut matching = Vec::new();
-        for found in &search.found {
+        for found in &found {
             // A function's type is its signature, whose children are its parameters.
             let mut count = 0u32;
             self.type_info(found.type_id, TI_GET_CHILDRENCOUNT, &mut count)
@@ -414,7 +370,7 @@ impl Symbols {
                 self.check_address(name, found.address)?;
                 Ok(found.address as usize)
             }
-            [] if search.found.is_empty() => Err(format!("function `{name}` not found")),
+            [] if found.is_empty() => Err(format!("function `{name}` not found")),
             [] => Err(format!(
                 "no function `{name}` takes {params} parameters anymore"
             )),
@@ -431,8 +387,35 @@ impl Symbols {
 
     /// Address and size of a `static` variable declared inside `function`.
     pub fn function_static(&self, function: &str, name: &str) -> Result<(usize, usize)> {
+        let function_address = self.find_global(function)?.address;
+        // SAFETY: A plain DbgHelp call on our session.
+        let scoped = unsafe { SymSetScopeFromAddr(SESSION, function_address) } != 0;
+        // A zero module base enumerates the symbols of the scope set just before.
+        let mut found = scoped
+            .then(|| self.enumerate(0, name, None))
+            .flatten()
+            .ok_or_else(|| format!("cannot enumerate the variables of `{function}`"))?;
+        found.dedup_by_key(|found| found.address);
+        let found = match found[..] {
+            [found] => found,
+            [] => return Err(format!("`{function}` has no static variable `{name}`")),
+            _ => {
+                return Err(format!(
+                    "`{function}` has several static variables named `{name}`"
+                ));
+            }
+        };
+        self.check_address(name, found.address)?;
+        Ok((found.address as usize, self.type_length(found.type_id)?))
+    }
+
+    /// The symbols named `name` that have an address (locals don't; globals and statics do), and the
+    /// symbol tag `tag` if one is given. Searches the module at base address `module`, or with 0, the
+    /// scope set with `SymSetScopeFromAddr`. `None` if DbgHelp can't enumerate them.
+    fn enumerate(&self, module: u64, name: &str, tag: Option<u32>) -> Option<Vec<Found>> {
         struct Search<'a> {
             name: &'a str,
+            tag: Option<u32>,
             found: Vec<Found>,
         }
         unsafe extern "system" fn collect(
@@ -448,8 +431,10 @@ impl Symbols {
                 let symbol_name =
                     std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
                 let symbol_name = String::from_utf16_lossy(symbol_name);
-                // Locals have no address; statics do.
-                if symbol_name.trim_end_matches('\0') == search.name && info.Address != 0 {
+                if symbol_name.trim_end_matches('\0') == search.name
+                    && info.Address != 0
+                    && search.tag.is_none_or(|tag| info.Tag == tag)
+                {
                     search.found.push(Found {
                         address: info.Address,
                         type_id: info.TypeIndex,
@@ -459,37 +444,23 @@ impl Symbols {
             1
         }
 
-        let function_address = self.find_global(function)?.address;
         let mut search = Search {
             name,
+            tag,
             found: Vec::new(),
         };
         let wide_name = wide(name);
         // SAFETY: The callback matches DbgHelp's signature and only uses the context we pass here.
-        // A zero module base makes DbgHelp enumerate the symbols of the scope set just before.
         let ok = unsafe {
-            SymSetScopeFromAddr(SESSION, function_address) != 0
-                && SymEnumSymbolsW(
-                    SESSION,
-                    0,
-                    wide_name.as_ptr(),
-                    Some(collect),
-                    &mut search as *mut Search as *const c_void,
-                ) != 0
+            SymEnumSymbolsW(
+                SESSION,
+                module,
+                wide_name.as_ptr(),
+                Some(collect),
+                &mut search as *mut Search as *const c_void,
+            ) != 0
         };
-        search.found.dedup_by_key(|found| found.address);
-        let found = match search.found[..] {
-            _ if !ok => return Err(format!("cannot enumerate the variables of `{function}`")),
-            [found] => found,
-            [] => return Err(format!("`{function}` has no static variable `{name}`")),
-            _ => {
-                return Err(format!(
-                    "`{function}` has several static variables named `{name}`"
-                ));
-            }
-        };
-        self.check_address(name, found.address)?;
-        Ok((found.address as usize, self.type_length(found.type_id)?))
+        ok.then_some(search.found)
     }
 
     fn find_global(&self, name: &str) -> Result<Found> {
