@@ -96,6 +96,7 @@ impl<'a> Game<'a> {
 ///
 /// `address` must be readable for `size_of::<T>()` bytes and hold a valid `T`.
 unsafe fn read<T: Copy>(address: usize) -> T {
+    // SAFETY: Guaranteed by the caller; unaligned reads are fine for any address.
     unsafe { ptr::read_unaligned(address as *const T) }
 }
 
@@ -105,5 +106,6 @@ unsafe fn read<T: Copy>(address: usize) -> T {
 ///
 /// `address` must be writable for `size_of::<T>()` bytes.
 unsafe fn write<T: Copy>(address: usize, value: T) {
+    // SAFETY: Guaranteed by the caller; unaligned writes are fine for any address.
     unsafe { ptr::write_unaligned(address as *mut T, value) }
 }

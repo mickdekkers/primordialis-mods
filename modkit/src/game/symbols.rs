@@ -164,6 +164,8 @@ pub unsafe fn load_for_image(base: usize, game_dir: &Path, cache_dir: &Path) -> 
 ///
 /// `base` must point to a PE image mapped by the Windows loader.
 unsafe fn read_codeview(base: usize) -> Result<(CodeView, u32)> {
+    // SAFETY: `base` is a mapped PE image, as guaranteed by the caller, so its headers, its debug
+    // directory and the records that points to are mapped and readable.
     unsafe {
         let dos = &*(base as *const IMAGE_DOS_HEADER);
         if dos.e_magic != 0x5A4D {

@@ -69,11 +69,11 @@ pub fn destroy() {
 // right before the aligned block, like std's Windows allocator.
 unsafe impl GlobalAlloc for PrivateHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        unsafe { allocate(layout, 0) }
+        allocate(layout, 0)
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        unsafe { allocate(layout, HEAP_ZERO_MEMORY) }
+        allocate(layout, HEAP_ZERO_MEMORY)
     }
 
     unsafe fn dealloc(&self, block: *mut u8, layout: Layout) {
@@ -108,7 +108,7 @@ unsafe impl GlobalAlloc for PrivateHeap {
     }
 }
 
-unsafe fn allocate(layout: Layout, flags: u32) -> *mut u8 {
+fn allocate(layout: Layout, flags: u32) -> *mut u8 {
     let heap = heap();
     if heap.is_null() {
         return ptr::null_mut();
