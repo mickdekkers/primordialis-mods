@@ -9,6 +9,7 @@
 //! nothing here depends on how the mod is loaded or hooked.
 
 pub(crate) mod bindings;
+mod pdb;
 mod render;
 pub(crate) mod symbols;
 mod tooltip;

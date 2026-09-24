@@ -1,30 +1,27 @@
 //! Looks up the game's functions, globals and struct layouts by name, using the debug symbols (PDB)
 //! the game ships in `pdbs.zip`. The PDB matching the running executable is extracted into a cache
-//! directory once, then queried through Windows' DbgHelp.
+//! directory once (see `pdb`), then queried through Windows' DbgHelp.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::fs::{self, File};
-use std::io::{self, BufReader};
 use std::mem::size_of;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr;
 use std::time::Instant;
 
 use windows_sys::Win32::Foundation::{HANDLE, LocalFree};
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG,
-    IMAGE_NT_HEADERS64, IMAGEHLP_MODULEW64, IMAGEHLP_SYMBOL_TYPE_INFO, SYMBOL_INFOW,
-    SYMOPT_FAIL_CRITICAL_ERRORS, SYMOPT_NO_PROMPTS, SYMOPT_UNDNAME, SymCleanup, SymEnumSymbolsW,
-    SymFromNameW, SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo, SymInitializeW,
-    SymLoadModuleExW, SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN,
-    TI_GET_BITPOSITION, TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME,
-    TI_GET_SYMTAG, TI_GET_TYPEID,
+    IMAGEHLP_MODULEW64, IMAGEHLP_SYMBOL_TYPE_INFO, SYMBOL_INFOW, SYMOPT_FAIL_CRITICAL_ERRORS,
+    SYMOPT_NO_PROMPTS, SYMOPT_UNDNAME, SymCleanup, SymEnumSymbolsW, SymFromNameW,
+    SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo, SymInitializeW, SymLoadModuleExW,
+    SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN, TI_GET_BITPOSITION,
+    TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME, TI_GET_SYMTAG,
+    TI_GET_TYPEID,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 use windows_sys::core::BOOL;
 
+use super::pdb::{self, CodeView};
 use crate::{Result, log};
 
 /// DbgHelp identifies sessions by a caller-chosen handle, which "need not be a process handle".
@@ -39,21 +36,6 @@ const SYM_TAG_DATA: u32 = 7;
 /// User-defined type: a struct, class or union.
 const SYM_TAG_UDT: u32 = 11;
 const SYM_TAG_TYPEDEF: u32 = 17;
-
-/// The executable's CodeView record, which identifies the exact PDB it was built with.
-struct CodeView {
-    guid: [u8; 16],
-    age: u32,
-    pdb_name: String,
-}
-
-impl CodeView {
-    fn id(&self) -> String {
-        let mut id: String = self.guid.iter().map(|b| format!("{b:02X}")).collect();
-        id.push_str(&format!("{:X}", self.age));
-        id
-    }
-}
 
 /// An open DbgHelp session with the game's PDB loaded at the executable's actual base address, so
 /// every address it returns is directly usable.
@@ -141,14 +123,14 @@ pub fn load(game_dir: &Path, cache_dir: &Path) -> Result<Symbols> {
 pub unsafe fn load_for_image(base: usize, game_dir: &Path, cache_dir: &Path) -> Result<Symbols> {
     let started = Instant::now();
     // SAFETY: Forwarded from the caller.
-    let (codeview, image_size) = unsafe { read_codeview(base)? };
+    let (codeview, image_size) = unsafe { pdb::read_codeview(base)? };
     log::info(&format!(
         "game executable expects {} ({})",
         codeview.pdb_name,
         codeview.id()
     ));
 
-    let pdb_path = extract_pdb(game_dir, cache_dir, &codeview)?;
+    let pdb_path = pdb::extract(game_dir, cache_dir, &codeview)?;
     let symbols = Symbols::open(&pdb_path, base, image_size, &codeview)?;
     log::info(&format!(
         "loaded symbols from {} in {:.0?}",
@@ -156,126 +138,6 @@ pub unsafe fn load_for_image(base: usize, game_dir: &Path, cache_dir: &Path) -> 
         started.elapsed()
     ));
     Ok(symbols)
-}
-
-/// Reads the CodeView (RSDS) debug record and the image size from a mapped PE image.
-///
-/// # Safety
-///
-/// `base` must point to a PE image mapped by the Windows loader.
-unsafe fn read_codeview(base: usize) -> Result<(CodeView, u32)> {
-    // SAFETY: `base` is a mapped PE image, as guaranteed by the caller, so its headers, its debug
-    // directory and the records that points to are mapped and readable.
-    unsafe {
-        let dos = &*(base as *const IMAGE_DOS_HEADER);
-        if dos.e_magic != 0x5A4D {
-            return Err("game executable has no MZ header".into());
-        }
-        let nt = &*((base + dos.e_lfanew as usize) as *const IMAGE_NT_HEADERS64);
-        if nt.Signature != 0x0000_4550 {
-            return Err("game executable has no PE header".into());
-        }
-        let image_size = nt.OptionalHeader.SizeOfImage;
-        let directory = nt.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG as usize];
-        let count = directory.Size as usize / size_of::<IMAGE_DEBUG_DIRECTORY>();
-        let entries = (base + directory.VirtualAddress as usize) as *const IMAGE_DEBUG_DIRECTORY;
-        for i in 0..count {
-            let entry = &*entries.add(i);
-            if entry.Type != IMAGE_DEBUG_TYPE_CODEVIEW || entry.AddressOfRawData == 0 {
-                continue;
-            }
-            let record = (base + entry.AddressOfRawData as usize) as *const u8;
-            if std::slice::from_raw_parts(record, 4) != b"RSDS" {
-                continue;
-            }
-            let mut guid = [0u8; 16];
-            guid.copy_from_slice(std::slice::from_raw_parts(record.add(4), 16));
-            let age = ptr::read_unaligned(record.add(20) as *const u32);
-            let path = std::ffi::CStr::from_ptr(record.add(24).cast())
-                .to_string_lossy()
-                .into_owned();
-            // The record holds the build machine's full path; the zip only has the file name.
-            let pdb_name = path.rsplit(['\\', '/']).next().unwrap_or(&path).to_owned();
-            return Ok((
-                CodeView {
-                    guid,
-                    age,
-                    pdb_name,
-                },
-                image_size,
-            ));
-        }
-        Err("game executable has no CodeView debug record".into())
-    }
-}
-
-/// Extracts the PDB named in the CodeView record from the game's `pdbs.zip`, unless a previous run
-/// already did. The cache is keyed by the PDB's GUID, so a game update gets a fresh extraction.
-fn extract_pdb(game_dir: &Path, cache_dir: &Path, codeview: &CodeView) -> Result<PathBuf> {
-    let id = codeview.id();
-    let dir = cache_dir.join(&id);
-    let pdb_path = dir.join(&codeview.pdb_name);
-    if pdb_path.is_file() {
-        return Ok(pdb_path);
-    }
-
-    let zip_path = game_dir.join("pdbs.zip");
-    let zip_file =
-        File::open(&zip_path).map_err(|e| format!("cannot open {}: {e}", zip_path.display()))?;
-    let mut archive = zip::ZipArchive::new(BufReader::new(zip_file))
-        .map_err(|e| format!("cannot read {}: {e}", zip_path.display()))?;
-    let entry_name = archive
-        .file_names()
-        .find(|name| name.eq_ignore_ascii_case(&codeview.pdb_name))
-        .map(str::to_owned)
-        .ok_or_else(|| {
-            format!(
-                "{} does not contain {}",
-                zip_path.display(),
-                codeview.pdb_name
-            )
-        })?;
-    let mut entry = archive
-        .by_name(&entry_name)
-        .map_err(|e| format!("cannot read {entry_name}: {e}"))?;
-
-    fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    // Extract under a temporary name so an interrupted extraction is never mistaken for a complete one.
-    let partial = dir.join(format!("{}.partial", codeview.pdb_name));
-    let copied = File::create(&partial).and_then(|mut out| io::copy(&mut entry, &mut out));
-    if let Err(error) = copied.and_then(|_| fs::rename(&partial, &pdb_path)) {
-        let _ = fs::remove_file(&partial);
-        return Err(format!(
-            "cannot extract {entry_name} to {}: {error}",
-            dir.display()
-        ));
-    }
-    log::info(&format!("extracted {entry_name} from pdbs.zip"));
-    remove_stale_cache_entries(cache_dir, &id);
-    Ok(pdb_path)
-}
-
-/// Deletes PDBs extracted for previous game versions. Only touches directories whose names look like
-/// our cache keys (GUID + age in hex), so nothing else can be deleted by accident.
-fn remove_stale_cache_entries(cache_dir: &Path, current_id: &str) {
-    let Ok(entries) = fs::read_dir(cache_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let looks_like_key = name.len() > 32 && name.chars().all(|c| c.is_ascii_hexdigit());
-        if looks_like_key && name != current_id && entry.path().is_dir() {
-            match fs::remove_dir_all(entry.path()) {
-                Ok(()) => log::info(&format!(
-                    "removed symbols cached for an older game version ({name})"
-                )),
-                Err(e) => log::warn(&format!(
-                    "could not remove old cache {}: {e}",
-                    entry.path().display()
-                )),
-            }
-        }
-    }
 }
 
 fn wide(s: &str) -> Vec<u16> {
