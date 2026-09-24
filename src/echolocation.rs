@@ -102,36 +102,33 @@ impl EcholocationFix {
         });
     }
 
-    /// Moves the pickups back, logging (once) if it couldn't.
+    /// Moves the pickups back, logging (once) if the pickups changed in between.
     fn restore_pickups(&mut self, game: &Game) {
         if !self.put_back(game) && !self.logged_unrestored {
             self.logged_unrestored = true;
             log::warn(
-                "pickups changed while moved for Echolocation; left them at the moved positions",
+                "pickups changed while moved for Echolocation; moved back those still where they                  were moved to",
             );
         }
     }
 
-    /// Moves the pickups back. Returns false if the pickups changed in between, and were left alone.
+    /// Moves the pickups back. Returns false if the pickup array changed in between.
     fn put_back(&mut self, game: &Game) -> bool {
         if self.moved.positions.is_empty() {
             return true;
         }
         let pickups = game.pickups();
-        // Nothing should change the pickups in between, but if something did, leave them be: a moved
-        // pickup is only where the physics would have put it anyway.
-        let same = self.moved.pickups == Some(pickups.id());
-        if same {
-            for &(index, original, written) in &self.moved.positions {
-                let Some(pickup) = pickups.get(index) else {
-                    continue;
-                };
-                if pickup.position().same_bits(written) {
-                    pickup.set_position(original);
-                }
+        // Nothing should change the pickups in between. If something did, an index may now refer to
+        // another pickup, so only a pickup still exactly where it was moved to is moved back. Leaving
+        // them all instead would leave those moved out of range there for good.
+        for &(index, original, written) in &self.moved.positions {
+            if let Some(pickup) = pickups.get(index)
+                && pickup.position().same_bits(written)
+            {
+                pickup.set_position(original);
             }
         }
         self.moved.positions.clear();
-        same
+        self.moved.pickups == Some(pickups.id())
     }
 }

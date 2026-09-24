@@ -122,6 +122,7 @@ pub struct MapIcons {
     fades: Fades,
     tooltip: Tooltip,
     logged_first_draw: bool,
+    logged_unrestored: bool,
 }
 
 /// Which icons are drawn over which: the spread out grid over the rest, and the icon under the mouse
@@ -226,13 +227,14 @@ impl Feature for MapIcons {
 
     fn stage_end(&mut self, frame: &Frame, stage: Stage) {
         if stage == Stage::CELL_PICKUPS {
-            self.show_in_world(frame.game());
+            self.restore_in_world(frame.game());
         } else if stage == Stage::RACING_OVERLAY {
             self.show_world_tooltip(frame.game());
         }
     }
 
     fn revert(&mut self, game: &Game) {
+        // No logging here: it may run while the game's threads are paused.
         self.show_in_world(game);
         self.show_world_tooltip(game);
     }
@@ -250,7 +252,7 @@ impl MapIcons {
     /// to be drawn in the world, until `show_in_world`: their icons stand in for them. Not once the map
     /// starts closing: its icons fade out then, and the pickups should be back at once.
     fn hide_in_world(&mut self, game: &Game) {
-        self.show_in_world(game);
+        self.restore_in_world(game);
         let pickups = game.pickups();
         if self.on_grid.0 != Some(pickups.id()) || !game.map_mode() {
             return;
@@ -264,22 +266,33 @@ impl MapIcons {
         }
     }
 
-    fn show_in_world(&mut self, game: &Game) {
+    /// Shows the pickups hidden in the world again, logging (once) if the pickups changed in between.
+    fn restore_in_world(&mut self, game: &Game) {
+        if !self.show_in_world(game) && !self.logged_unrestored {
+            self.logged_unrestored = true;
+            log::warn("pickups changed while hidden in the world; showed those still hidden");
+        }
+    }
+
+    /// Shows the pickups hidden in the world again. Returns false if the pickup array changed in
+    /// between.
+    fn show_in_world(&mut self, game: &Game) -> bool {
         if self.hidden.alphas.is_empty() {
-            return;
+            return true;
         }
         let pickups = game.pickups();
-        // Nothing should change the pickups in between, but if something did, leave them be.
-        if self.hidden.pickups == Some(pickups.id()) {
-            for &(index, alpha) in &self.hidden.alphas {
-                if let Some(pickup) = pickups.get(index)
-                    && pickup.alpha().to_bits() == 0f32.to_bits()
-                {
-                    pickup.set_alpha(alpha);
-                }
+        // Nothing should change the pickups in between. If something did, an index may now refer to
+        // another pickup, so only a pickup still hidden is shown again. Leaving them all instead would
+        // leave them hidden for good.
+        for &(index, alpha) in &self.hidden.alphas {
+            if let Some(pickup) = pickups.get(index)
+                && pickup.alpha().to_bits() == 0f32.to_bits()
+            {
+                pickup.set_alpha(alpha);
             }
         }
         self.hidden.alphas.clear();
+        self.hidden.pickups == Some(pickups.id())
     }
 
     /// While the map is open, keeps the game from drawing its tooltip for the pickup under the mouse
