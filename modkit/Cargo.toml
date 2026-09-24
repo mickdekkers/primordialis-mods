@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 modkit_protocol = { path = "../protocol" }
 detour.workspace = true
+# Not used directly: zip decompresses with it, and this picks its pure-Rust backend.
 flate2.workspace = true
 zip.workspace = true
 toml.workspace = true
@@ -17,6 +18,7 @@ windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
+    # Not used directly: windows-sys gates `CONTEXT` and `GetThreadContext` on it.
     "Win32_System_Kernel",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
