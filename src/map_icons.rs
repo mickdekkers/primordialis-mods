@@ -41,7 +41,7 @@ static SHOW_TOOLTIPS: Toggle = Toggle::new(
 
 /// Icon radius as a fraction of half the screen height, so icons keep the same on-screen size at any
 /// map zoom level.
-const ICON_SCREEN_RADIUS: f32 = 0.0264;
+const ICON_SCREEN_RADIUS: f32 = 0.0385;
 /// A map hex's `explored` value rises from 0 to 1 as you see it. Pickups in hexes below the minimum
 /// are hidden; between minimum and full, their icons fade in, matching how the map itself fades in.
 const EXPLORED_MIN: f32 = 0.3;
@@ -78,10 +78,19 @@ const LEADER_ALPHA: f32 = 0.6;
 /// and this opaque.
 const POINTED_LEADER_SCALE: f32 = 1.5;
 const POINTED_LEADER_ALPHA: f32 = 1.0;
-/// While the mouse points at an icon, every other icon (and the grid's lines and dots) fades to this
-/// opacity, and back once it doesn't, each over this many `frame_number` ticks (120 per second).
-const UNFOCUSED_ALPHA: f32 = 0.3;
-const FOCUS_TICKS: f32 = 8.0;
+/// While the mouse points at an icon, the other icons around the mouse (and their lines and dots on
+/// the grid) fade to this opacity, and back once it doesn't.
+const UNFOCUSED_ALPHA: f32 = 0.5;
+/// Icons ease towards the opacity they should have with a time constant, in `frame_number` ticks (120
+/// per second), of the first under the mouse (~70 ms), rising with the distance from it to the second
+/// at the spotlight's edge and beyond (125 ms, so ~95% of the way there in 375 ms): what the mouse
+/// points at responds at once, and the icons around it follow smoothly.
+const FADE_TICKS_NEAR: f32 = 8.0;
+const FADE_TICKS_FAR: f32 = 15.0;
+/// The icons faded are those within this many icon radii of the mouse, easing back to full opacity
+/// by the second, so icons further away stay clear.
+const SPOTLIGHT_RADIUS: f32 = 4.0;
+const SPOTLIGHT_EDGE: f32 = 12.0;
 /// The tooltip's second line, for combo pickups, is this light gray.
 const COMBO_LINE_COLOR: [f32; 3] = [0.75, 0.75, 0.75];
 
@@ -126,39 +135,44 @@ enum Layer {
 /// to it).
 #[derive(Default)]
 struct Fades {
-    /// The pickup array `alphas` is indexed like.
+    /// The pickup array `alphas` and `targets` are indexed like.
     pickups: Option<PickupsId>,
     /// Opacity of each pickup's icon, from `UNFOCUSED_ALPHA` to 1.
     alphas: Vec<f32>,
+    /// The opacity each is easing towards this frame, and its time constant in ticks.
+    targets: Vec<(f32, f32)>,
     last_frame: Option<i32>,
 }
 
 impl Fades {
-    /// Eases every icon towards full opacity if it's `hovered` or nothing is, and towards
-    /// `UNFOCUSED_ALPHA` otherwise.
-    fn update(
-        &mut self,
-        pickups: PickupsId,
-        len: usize,
-        hovered: Option<usize>,
-        frame_number: i32,
-    ) {
+    /// Starts a frame in which every pickup's icon eases slowly towards full opacity, unless
+    /// `set_target` says otherwise before `ease`.
+    fn begin(&mut self, pickups: PickupsId, len: usize) {
         if self.pickups != Some(pickups) {
             self.pickups = Some(pickups);
             self.alphas.clear();
             self.alphas.resize(len, 1.0);
         }
+        self.targets.clear();
+        self.targets.resize(len, (1.0, FADE_TICKS_FAR));
+    }
+
+    fn set_target(&mut self, pickup: usize, alpha: f32, ticks: f32) {
+        if let Some(target) = self.targets.get_mut(pickup) {
+            *target = (alpha, ticks);
+        }
+    }
+
+    /// Moves every icon's opacity towards its target, exponentially: the same share of the way each
+    /// tick, so it slows as it arrives, and a target that keeps moving (as the mouse does) is
+    /// followed smoothly.
+    fn ease(&mut self, frame_number: i32) {
         let ticks = match self.last_frame.replace(frame_number) {
-            Some(last) => frame_number.wrapping_sub(last).clamp(0, 30) as f32,
+            Some(last) => frame_number.wrapping_sub(last).clamp(0, 60) as f32,
             None => 0.0,
         };
-        let step = ticks / FOCUS_TICKS * (1.0 - UNFOCUSED_ALPHA);
-        for (pickup, alpha) in self.alphas.iter_mut().enumerate() {
-            *alpha = if hovered.is_none_or(|hovered| hovered == pickup) {
-                (*alpha + step).min(1.0)
-            } else {
-                (*alpha - step).max(UNFOCUSED_ALPHA)
-            };
+        for (alpha, &(target, time_constant)) in self.alphas.iter_mut().zip(&self.targets) {
+            *alpha += (target - *alpha) * (1.0 - (-ticks / time_constant).exp());
         }
     }
 
@@ -341,14 +355,24 @@ impl MapIcons {
                 .map(|(icon, _)| icon)
         });
 
-        // The icon under the mouse stands out, and every other icon fades.
+        // The icon under the mouse stands out, and the other icons around the mouse fade.
         let pickups = game.pickups();
-        self.fades.update(
-            pickups.id(),
-            pickups.len(),
-            hovered.map(|icon| self.visible[icon].pickup),
-            frame_number,
-        );
+        self.fades.begin(pickups.id(), pickups.len());
+        if let Some(mouse) = mouse_on_map {
+            let (inner, outer) = (SPOTLIGHT_RADIUS * radius, SPOTLIGHT_EDGE * radius);
+            for (icon, visible) in self.visible.iter().enumerate() {
+                let d = distance(shown[icon], mouse);
+                let alpha = match hovered {
+                    Some(hovered) if hovered != icon => {
+                        lerp_f32(UNFOCUSED_ALPHA, 1.0, smoothstep(inner, outer, d))
+                    }
+                    _ => 1.0,
+                };
+                let ticks = lerp_f32(FADE_TICKS_NEAR, FADE_TICKS_FAR, (d / outer).min(1.0));
+                self.fades.set_target(visible.pickup, alpha, ticks);
+            }
+        }
+        self.fades.ease(frame_number);
 
         self.order.clear();
         self.order.extend(
