@@ -44,7 +44,7 @@ const CLOSE_TICKS: f32 = 12.0;
 #[derive(Default)]
 pub struct Spread {
     grid: Option<Grid>,
-    spiral: Spiral,
+    scratch: Scratch,
     /// The pickup array the grid's pickup indices index.
     pickups: Option<PickupsId>,
     clock: TickClock,
@@ -95,7 +95,7 @@ impl Spread {
             .is_some_and(|(grid, mouse)| grid.keeps_open(radius, mouse));
         if let (true, Some(grid)) = (inside, &mut self.grid) {
             grid.open = true;
-            grid.grow(&mut self.spiral, pickups, positions, radius);
+            grid.grow(&mut self.scratch, pickups, positions, radius);
         } else {
             // A new grid around the icon under the mouse, if it overlaps others.
             let under_mouse = mouse.and_then(|mouse| {
@@ -119,7 +119,7 @@ impl Spread {
                         .enumerate()
                         .any(|(other, &p)| other != icon && p.distance(at) < clear)
                 })
-                .map(|icon| Grid::new(&mut self.spiral, pickups, positions, icon, radius))
+                .map(|icon| Grid::new(&mut self.scratch, pickups, positions, icon, radius))
                 .filter(|grid| grid.spots.len() > 1);
             match (new, &mut self.grid) {
                 // A different grid: the previous one collapses at once.
@@ -172,6 +172,17 @@ impl Spread {
     }
 }
 
+/// What building and growing grids works with, kept from one frame to the next so that a grid open
+/// under the mouse doesn't allocate every frame.
+#[derive(Default)]
+struct Scratch {
+    spiral: Spiral,
+    /// Icons off the grid, by square (see `Grid::grow`).
+    squares: FxHashMap<(i32, i32), Vec<usize>>,
+    near: Vec<(f32, usize)>,
+    crowded: Vec<usize>,
+}
+
 /// Icons on a hexagonal grid, and the cells it covers.
 struct Grid {
     /// The pickup index of the icon the grid was built around, and where it was then: the spot at
@@ -204,7 +215,7 @@ impl Grid {
     /// The grid around icon `anchor`, with the other icons on the map at `positions`, and their
     /// pickup indices `pickups`.
     fn new(
-        spiral: &mut Spiral,
+        scratch: &mut Scratch,
         pickups: &[usize],
         positions: &[Real2],
         anchor: usize,
@@ -221,8 +232,13 @@ impl Grid {
             taken_near: FxHashMap::default(),
         };
         let lattice = grid.lattice(SPACING * radius);
-        grid.join(spiral, &lattice, pickups[anchor], positions[anchor]);
-        grid.grow(spiral, pickups, positions, radius);
+        grid.join(
+            &mut scratch.spiral,
+            &lattice,
+            pickups[anchor],
+            positions[anchor],
+        );
+        grid.grow(scratch, pickups, positions, radius);
         grid
     }
 
@@ -237,7 +253,7 @@ impl Grid {
     /// they joined: the icons too close to each join in turn, nearest first, to be passed over
     /// later. Then adds the icons the mouse could point at while the grid is open that overlap
     /// others, passes over those, and so on, until there are none left.
-    fn grow(&mut self, spiral: &mut Spiral, pickups: &[usize], positions: &[Real2], radius: f32) {
+    fn grow(&mut self, scratch: &mut Scratch, pickups: &[usize], positions: &[Real2], radius: f32) {
         let lattice = self.lattice(SPACING * radius);
         let clear = CLEAR_DISTANCE * radius;
         let clear_squared = clear * clear;
@@ -253,14 +269,22 @@ impl Grid {
         // Only icons this near the grid's bounds can join it, or overlap one that can.
         let nearby = clear.max(reach + OVERLAP_DISTANCE * radius);
         let square = |at: Real2| ((at.x / clear).floor() as i32, (at.y / clear).floor() as i32);
-        let mut squares: FxHashMap<(i32, i32), Vec<usize>> = FxHashMap::default();
-        let mut near: Vec<(f32, usize)> = Vec::new();
-        let mut crowded: Vec<usize> = Vec::new();
+        let Scratch {
+            spiral,
+            squares,
+            near,
+            crowded,
+        } = scratch;
+        // Squares are emptied rather than removed, to reuse them, unless there are many more than
+        // icons (the squares change size with the icons, so zooming leaves old ones behind).
+        if squares.len() > 2 * positions.len() + 64 {
+            squares.clear();
+        }
         loop {
             // The icons off the grid near its bounds, by `clear` wide squares, so each spot only looks
             // at the icons around it. Icons leave their squares as they join.
             let bounds = self.bounds;
-            squares.clear();
+            squares.values_mut().for_each(Vec::clear);
             for (icon, &at) in positions.iter().enumerate() {
                 if !self.on_grid[pickups[icon]] && bounds.contains(&lattice, at, nearby) {
                     squares.entry(square(at)).or_default().push(icon);
@@ -289,7 +313,7 @@ impl Grid {
                         }
                     }
                     near.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                    for &(_, icon) in &near {
+                    for &(_, icon) in near.iter() {
                         self.join(spiral, &lattice, pickups[icon], positions[icon]);
                     }
                 }
@@ -324,7 +348,7 @@ impl Grid {
                     break;
                 }
                 crowded.sort_unstable();
-                for &icon in &crowded {
+                for &icon in crowded.iter() {
                     if let Some(icons) = squares.get_mut(&square(positions[icon]))
                         && let Some(i) = icons.iter().position(|&other| other == icon)
                     {
@@ -567,7 +591,7 @@ mod tests {
 
     fn build(positions: &[Real2], anchor: usize, radius: f32) -> Grid {
         let pickups: Vec<usize> = (0..positions.len()).collect();
-        Grid::new(&mut Spiral::default(), &pickups, positions, anchor, radius)
+        Grid::new(&mut Scratch::default(), &pickups, positions, anchor, radius)
     }
 
     fn min_gap(points: &[Real2]) -> f32 {
@@ -783,10 +807,10 @@ mod tests {
         let mut positions: Vec<Real2> = (0..12).map(|i| Real2::new(i as f32 * 3.0, 0.0)).collect();
         positions.push(Real2::new(0.1, 0.0));
         let pickups: Vec<usize> = (0..positions.len()).collect();
-        let mut spiral = Spiral::default();
-        let mut grid = Grid::new(&mut spiral, &pickups, &positions, 0, 1.0);
+        let mut scratch = Scratch::default();
+        let mut grid = Grid::new(&mut scratch, &pickups, &positions, 0, 1.0);
         let before: Vec<(usize, Hex)> = grid.spots.iter().map(|s| (s.pickup, s.hex)).collect();
-        grid.grow(&mut spiral, &pickups, &positions, 1.6);
+        grid.grow(&mut scratch, &pickups, &positions, 1.6);
         assert!(grid.spots.len() > before.len());
         for (spot, &(pickup, hex)) in grid.spots.iter().zip(&before) {
             assert_eq!((spot.pickup, spot.hex), (pickup, hex));
