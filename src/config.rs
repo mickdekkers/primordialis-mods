@@ -5,8 +5,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{PoisonError, RwLock};
-use std::thread;
+use std::sync::{Arc, Condvar, Mutex, PoisonError, RwLock};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use crate::log;
@@ -62,36 +62,76 @@ impl Default for Config {
 }
 
 static CURRENT: RwLock<Config> = RwLock::new(Config::DEFAULT);
+static PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+static WATCHER: Mutex<Option<Watcher>> = Mutex::new(None);
+
+/// The thread reloading the settings when the file changes.
+struct Watcher {
+    thread: JoinHandle<()>,
+    /// Set to stop the thread, which waits on the condition variable between checks.
+    stop: Arc<(Mutex<bool>, Condvar)>,
+}
 
 /// The settings currently in effect.
 pub fn current() -> Config {
     *CURRENT.read().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Loads the settings from `dir`, and reloads them in the background whenever the file changes.
+/// Loads the settings from `dir`.
 pub fn init(dir: &Path) {
     let path = dir.join(FILE_NAME);
     let config = load(&path).unwrap_or_default();
     *CURRENT.write().unwrap_or_else(PoisonError::into_inner) = config;
+    *PATH.lock().unwrap_or_else(PoisonError::into_inner) = Some(path);
     log::info(&format!("settings: {config:?}"));
+}
 
-    let spawned = thread::Builder::new().name("primordialis_qol settings".into()).spawn(move || watch(path));
-    if let Err(error) = spawned {
-        log::warn(&format!("cannot watch {FILE_NAME} for changes: {error}"));
+/// Starts reloading the settings in the background whenever the file changes.
+pub fn start_watching() {
+    let mut watcher = WATCHER.lock().unwrap_or_else(PoisonError::into_inner);
+    let Some(path) = PATH.lock().unwrap_or_else(PoisonError::into_inner).clone() else { return };
+    if watcher.is_some() {
+        return;
+    }
+    let stop = Arc::new((Mutex::new(false), Condvar::new()));
+    let thread_stop = Arc::clone(&stop);
+    let spawned = thread::Builder::new()
+        .name("primordialis_qol settings".into())
+        .spawn(move || watch(&path, &thread_stop));
+    match spawned {
+        Ok(thread) => *watcher = Some(Watcher { thread, stop }),
+        Err(error) => log::warn(&format!("cannot watch {FILE_NAME} for changes: {error}")),
     }
 }
 
-fn watch(path: PathBuf) {
-    let mut last = file_version(&path);
+/// Stops the background reloading, and waits until its thread has exited.
+pub fn stop_watching() {
+    let Some(watcher) = WATCHER.lock().unwrap_or_else(PoisonError::into_inner).take() else { return };
+    let (stopped, wake) = &*watcher.stop;
+    *stopped.lock().unwrap_or_else(PoisonError::into_inner) = true;
+    wake.notify_all();
+    let _ = watcher.thread.join();
+}
+
+fn watch(path: &Path, stop: &(Mutex<bool>, Condvar)) {
+    let (stopped, wake) = stop;
+    let mut last = file_version(path);
     loop {
-        thread::sleep(WATCH_INTERVAL);
-        let version = file_version(&path);
+        let stopped = stopped.lock().unwrap_or_else(PoisonError::into_inner);
+        let (stopped, _) = wake
+            .wait_timeout_while(stopped, WATCH_INTERVAL, |stopped| !*stopped)
+            .unwrap_or_else(PoisonError::into_inner);
+        if *stopped {
+            return;
+        }
+        drop(stopped);
+        let version = file_version(path);
         if version == last {
             continue;
         }
         last = version;
         // An invalid file (e.g. saved halfway through an edit) keeps the settings as they were.
-        let Some(config) = load(&path) else { continue };
+        let Some(config) = load(path) else { continue };
         let mut current = CURRENT.write().unwrap_or_else(PoisonError::into_inner);
         if *current != config {
             *current = config;

@@ -1,17 +1,22 @@
-//! Minimal file logger. The log is recreated on every launch, next to the DLL.
+//! Minimal file logger, next to the DLL. Recreated when the game starts; appended to when the hot
+//! reload host loads a new build.
 
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static LOG: Mutex<Option<File>> = Mutex::new(None);
 
-pub fn init(path: &Path) {
-    if let Ok(mut log) = LOG.lock() {
-        *log = File::create(path).ok();
-    }
+pub fn init(path: &Path, append: bool) {
+    let file = if append { OpenOptions::new().create(true).append(true).open(path) } else { File::create(path) };
+    *LOG.lock().unwrap_or_else(PoisonError::into_inner) = file.ok();
+}
+
+/// Closes the log file; later messages are dropped.
+pub fn close() {
+    *LOG.lock().unwrap_or_else(PoisonError::into_inner) = None;
 }
 
 pub fn info(message: &str) {
@@ -27,7 +32,7 @@ pub fn error(message: &str) {
 }
 
 fn write(level: &str, message: &str) {
-    let Ok(mut log) = LOG.lock() else { return };
+    let mut log = LOG.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(file) = log.as_mut() else { return };
     let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
     let _ = writeln!(file, "[{seconds:.3}] {level}: {message}");

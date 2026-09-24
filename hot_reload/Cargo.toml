@@ -1,0 +1,28 @@
+[package]
+name = "primordialis_qol_hot_reload"
+version = "0.1.0"
+edition = "2024"
+description = "Development tool: loads primordialis_qol.dll into Primordialis and swaps in new builds while the game runs"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "primordialis_qol_inject"
+path = "src/inject.rs"
+
+# Pinned to the same reviewed version as the mod.
+[dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }

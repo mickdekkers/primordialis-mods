@@ -8,11 +8,11 @@
 //! We apply the same push-out, so icons show where the pickups will actually be. Optionally, pickups
 //! are also moved there while the Echolocation mutation draws its markers, and moved back right after.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use crate::game::Layout;
 use crate::log;
@@ -140,9 +140,31 @@ struct MovedPickups {
     positions: Vec<(usize, Real2, Real2)>,
 }
 
-thread_local! {
-    static BUFFERS: RefCell<Buffers> = RefCell::new(Buffers::default());
-    static MOVED: RefCell<MovedPickups> = RefCell::new(MovedPickups::default());
+// Only used on the render thread. Globals rather than thread-locals, so `reset` can free them before
+// the mod is unloaded.
+static BUFFERS: Mutex<Option<Buffers>> = Mutex::new(None);
+static MOVED: Mutex<MovedPickups> = Mutex::new(MovedPickups {
+    pickups: 0,
+    count: 0,
+    positions: Vec::new(),
+});
+
+fn with_buffers<R>(f: impl FnOnce(&mut Buffers) -> R) -> R {
+    let mut buffers = BUFFERS.lock().unwrap_or_else(PoisonError::into_inner);
+    f(buffers.get_or_insert_with(Buffers::default))
+}
+
+fn with_moved<R>(f: impl FnOnce(&mut MovedPickups) -> R) -> R {
+    f(&mut MOVED.lock().unwrap_or_else(PoisonError::into_inner))
+}
+
+/// Frees the overlay's memory. Only once the hooks are removed, and pickups restored.
+pub fn reset() {
+    *BUFFERS.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    MOVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .positions = Vec::new();
 }
 
 static LOGGED_FIRST_DRAW: AtomicBool = AtomicBool::new(false);
@@ -178,7 +200,12 @@ impl Resolved {
             // SAFETY: The layout's addresses are the game's `wall_map` and `w.map`.
             unsafe {
                 let wall_map: WallMap = std::mem::transmute(layout.wall_map);
-                push_out_of_walls(wall_map, (layout.world + layout.map) as *const c_void, pos, radius)
+                push_out_of_walls(
+                    wall_map,
+                    (layout.world + layout.map) as *const c_void,
+                    pos,
+                    radius,
+                )
             }
         })
     }
@@ -210,8 +237,8 @@ pub unsafe fn move_pickups_out_of_walls(layout: &Layout) {
         if count <= 0 || pickups == 0 {
             return;
         }
-        BUFFERS.with_borrow_mut(|Buffers { resolved, .. }| {
-            MOVED.with_borrow_mut(|moved| {
+        with_buffers(|Buffers { resolved, .. }| {
+            with_moved(|moved| {
                 resolved.trim(count as usize);
                 moved.pickups = pickups;
                 moved.count = count;
@@ -219,7 +246,8 @@ pub unsafe fn move_pickups_out_of_walls(layout: &Layout) {
                     let pickup = pickups + i * layout.pickup_size;
                     let address = pickup + layout.pickup_x;
                     let original = read::<Real2>(address);
-                    let target = resolved.get(layout, original, read::<f32>(pickup + layout.pickup_r));
+                    let target =
+                        resolved.get(layout, original, read::<f32>(pickup + layout.pickup_r));
                     if !same_position(original, target) {
                         write(address, target);
                         moved.positions.push((address, original, target));
@@ -236,7 +264,7 @@ pub unsafe fn move_pickups_out_of_walls(layout: &Layout) {
 ///
 /// As `move_pickups_out_of_walls`.
 pub unsafe fn restore_pickups(layout: &Layout) {
-    MOVED.with_borrow_mut(|moved| {
+    with_moved(|moved| {
         if moved.positions.is_empty() {
             return;
         }
@@ -253,7 +281,9 @@ pub unsafe fn restore_pickups(layout: &Layout) {
                     }
                 }
             } else if !LOGGED_UNRESTORED.swap(true, Ordering::Relaxed) {
-                log::warn("pickups changed while moved for Echolocation; left them at the moved positions");
+                log::warn(
+                    "pickups changed while moved for Echolocation; left them at the moved positions",
+                );
             }
         }
         moved.positions.clear();
@@ -270,7 +300,7 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize, fix_positions: bool) {
     unsafe {
         let fade = read::<f32>(layout.map_icon_alpha);
         let map_open = !fade.is_nan() && fade > MIN_MAP_ALPHA;
-        BUFFERS.with_borrow_mut(|Buffers { resolved, .. }| {
+        with_buffers(|Buffers { resolved, .. }| {
             if map_open && !resolved.map_open {
                 resolved.cache.clear();
             }
@@ -308,69 +338,80 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize, fix_positions: bool) {
         let (combo_flags, combo_bit) = layout.pickup_is_combo;
         let halo = Halo::new(frame_number, radius);
 
-        BUFFERS.with_borrow_mut(|Buffers { icons, halo_dots, resolved }| {
-            icons.clear();
-            halo_dots.clear();
-            resolved.trim(count as usize);
-            let mut moved = 0;
-            for i in 0..count as usize {
-                let pickup = pickups + i * layout.pickup_size;
-                let material_index = read::<i32>(pickup + layout.pickup_material_index);
-                if !(0..n_materials).contains(&material_index) {
-                    continue;
+        with_buffers(
+            |Buffers {
+                 icons,
+                 halo_dots,
+                 resolved,
+             }| {
+                icons.clear();
+                halo_dots.clear();
+                resolved.trim(count as usize);
+                let mut moved = 0;
+                for i in 0..count as usize {
+                    let pickup = pickups + i * layout.pickup_size;
+                    let material_index = read::<i32>(pickup + layout.pickup_material_index);
+                    if !(0..n_materials).contains(&material_index) {
+                        continue;
+                    }
+                    let spawned_at = read::<Real2>(pickup + layout.pickup_x);
+                    let pos = if fix_positions {
+                        resolved.get(layout, spawned_at, read::<f32>(pickup + layout.pickup_r))
+                    } else {
+                        spawned_at
+                    };
+                    if !same_position(pos, spawned_at) {
+                        moved += 1;
+                    }
+                    let explored = grid.explored_at(pos);
+                    if explored < EXPLORED_MIN {
+                        continue;
+                    }
+                    let material = materials + material_index as usize * layout.material_size;
+                    let mut color = read::<[f32; 4]>(material + layout.material_base_color);
+                    let is_combo = read::<u32>(pickup + combo_flags) & (1 << combo_bit) != 0;
+                    if is_combo {
+                        color[..3].copy_from_slice(&combo_rgb);
+                    }
+                    color[3] = color[3].clamp(0.0, 1.0)
+                        * fade
+                        * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
+                    icons.push(IconRenderInfo {
+                        x: [pos.x, pos.y, 0.0],
+                        r: radius,
+                        color,
+                        uv: read(material + layout.material_uv),
+                    });
+                    if is_combo {
+                        halo.add(halo_dots, pos, color[3] * HALO_ALPHA);
+                    }
                 }
-                let spawned_at = read::<Real2>(pickup + layout.pickup_x);
-                let pos = if fix_positions {
-                    resolved.get(layout, spawned_at, read::<f32>(pickup + layout.pickup_r))
-                } else {
-                    spawned_at
-                };
-                if !same_position(pos, spawned_at) {
-                    moved += 1;
-                }
-                let explored = grid.explored_at(pos);
-                if explored < EXPLORED_MIN {
-                    continue;
-                }
-                let material = materials + material_index as usize * layout.material_size;
-                let mut color = read::<[f32; 4]>(material + layout.material_base_color);
-                let is_combo = read::<u32>(pickup + combo_flags) & (1 << combo_bit) != 0;
-                if is_combo {
-                    color[..3].copy_from_slice(&combo_rgb);
-                }
-                color[3] = color[3].clamp(0.0, 1.0) * fade * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
-                icons.push(IconRenderInfo {
-                    x: [pos.x, pos.y, 0.0],
-                    r: radius,
-                    color,
-                    uv: read(material + layout.material_uv),
-                });
-                if is_combo {
-                    halo.add(halo_dots, pos, color[3] * HALO_ALPHA);
-                }
-            }
 
-            if !LOGGED_FIRST_DRAW.swap(true, Ordering::Relaxed) {
-                log::info(&format!(
-                    "first map draw: {} of {count} pickups in explored areas ({} combo, {moved} moved out of \
+                if !LOGGED_FIRST_DRAW.swap(true, Ordering::Relaxed) {
+                    log::info(&format!(
+                        "first map draw: {} of {count} pickups in explored areas ({} combo, {moved} moved out of \
                      walls), icon radius {radius:.1} world units",
-                    icons.len(),
-                    halo_dots.len() / HALO_DOTS
-                ));
-            }
-            if !halo_dots.is_empty() {
-                let draw_circles: DrawCircles = std::mem::transmute(layout.draw_circles);
-                draw_circles(halo_dots.as_ptr(), halo_dots.len() as i32, &camera);
-            }
-            if icons.is_empty() {
-                return;
-            }
-            // The icon shader shades icons as if lit from this point: the top of the screen, like the
-            // game's own pickups.
-            let light = Real2 { x: camera_pos[0], y: camera_pos[1] + units_per_ndc };
-            let draw_cell_icons: DrawCellIcons = std::mem::transmute(layout.draw_cell_icons);
-            draw_cell_icons(icons.as_ptr(), icons.len() as i32, &camera, light);
-        });
+                        icons.len(),
+                        halo_dots.len() / HALO_DOTS
+                    ));
+                }
+                if !halo_dots.is_empty() {
+                    let draw_circles: DrawCircles = std::mem::transmute(layout.draw_circles);
+                    draw_circles(halo_dots.as_ptr(), halo_dots.len() as i32, &camera);
+                }
+                if icons.is_empty() {
+                    return;
+                }
+                // The icon shader shades icons as if lit from this point: the top of the screen, like the
+                // game's own pickups.
+                let light = Real2 {
+                    x: camera_pos[0],
+                    y: camera_pos[1] + units_per_ndc,
+                };
+                let draw_cell_icons: DrawCellIcons = std::mem::transmute(layout.draw_cell_icons);
+                draw_cell_icons(icons.as_ptr(), icons.len() as i32, &camera, light);
+            },
+        );
     }
 }
 
@@ -380,7 +421,12 @@ pub unsafe fn draw(layout: &Layout, world_rc: usize, fix_positions: bool) {
 /// # Safety
 ///
 /// `wall_map` and `map` must be the game's `wall_map` function and `w.map`.
-unsafe fn push_out_of_walls(wall_map: WallMap, map: *const c_void, spawned_at: Real2, radius: f32) -> Real2 {
+unsafe fn push_out_of_walls(
+    wall_map: WallMap,
+    map: *const c_void,
+    spawned_at: Real2,
+    radius: f32,
+) -> Real2 {
     let clearance = WALL_CLEARANCE * radius;
     let mut pos = spawned_at;
     for _ in 0..MAX_PUSH_OUT_STEPS {
@@ -393,7 +439,11 @@ unsafe fn push_out_of_walls(wall_map: WallMap, map: *const c_void, spawned_at: R
         pos.x += wall.gradient.x * depth;
         pos.y += wall.gradient.y * depth;
     }
-    if pos.x.is_finite() && pos.y.is_finite() { pos } else { spawned_at }
+    if pos.x.is_finite() && pos.y.is_finite() {
+        pos
+    } else {
+        spawned_at
+    }
 }
 
 /// How many world units one unit of normalized device coordinates spans vertically, at the given
@@ -411,7 +461,10 @@ fn project(camera: &Real4x4, x: f32, y: f32) -> Option<Real2> {
     let clip_x = m[0] * x + m[1] * y + m[3];
     let clip_y = m[4] * x + m[5] * y + m[7];
     let clip_w = m[12] * x + m[13] * y + m[15];
-    (clip_w > 1e-6).then(|| Real2 { x: clip_x / clip_w, y: clip_y / clip_w })
+    (clip_w > 1e-6).then(|| Real2 {
+        x: clip_x / clip_w,
+        y: clip_y / clip_w,
+    })
 }
 
 /// The map's grid of `explored` values, one per hex within the map bounds.
@@ -471,18 +524,28 @@ impl Halo {
             // World y points up on screen, so decreasing angles turn clockwise.
             let angle = along * TAU - spin;
             let distance = HALO_RADIUS * icon_radius;
-            let offset = Real2 { x: angle.cos() * distance, y: angle.sin() * distance };
+            let offset = Real2 {
+                x: angle.cos() * distance,
+                y: angle.sin() * distance,
+            };
             (offset, rainbow(along))
         });
-        Halo { dots, dot_radius: HALO_DOT_RADIUS * icon_radius }
+        Halo {
+            dots,
+            dot_radius: HALO_DOT_RADIUS * icon_radius,
+        }
     }
 
     fn add(&self, out: &mut Vec<CircleRenderInfo>, center: Real2, alpha: f32) {
-        out.extend(self.dots.iter().map(|&(offset, [r, g, b])| CircleRenderInfo {
-            x: [center.x + offset.x, center.y + offset.y, 0.0],
-            r: self.dot_radius,
-            color: [r, g, b, alpha],
-        }));
+        out.extend(
+            self.dots
+                .iter()
+                .map(|&(offset, [r, g, b])| CircleRenderInfo {
+                    x: [center.x + offset.x, center.y + offset.y, 0.0],
+                    r: self.dot_radius,
+                    color: [r, g, b, alpha],
+                }),
+        );
     }
 }
 
@@ -509,7 +572,10 @@ mod tests {
     use super::*;
 
     fn center(q: i32, r: i32) -> Real2 {
-        Real2 { x: HEX_SPACING * q as f32 + 0.5 * HEX_SPACING * r as f32, y: HEX_ROW_HEIGHT * r as f32 }
+        Real2 {
+            x: HEX_SPACING * q as f32 + 0.5 * HEX_SPACING * r as f32,
+            y: HEX_ROW_HEIGHT * r as f32,
+        }
     }
 
     #[test]
@@ -524,8 +590,21 @@ mod tests {
     #[test]
     fn points_near_a_center_belong_to_its_hex() {
         let c = center(3, -7);
-        for (dx, dy) in [(90.0, 0.0), (-90.0, 0.0), (0.0, 90.0), (0.0, -90.0), (60.0, 60.0), (-60.0, -60.0)] {
-            assert_eq!(hex_at(Real2 { x: c.x + dx, y: c.y + dy }), (3, -7));
+        for (dx, dy) in [
+            (90.0, 0.0),
+            (-90.0, 0.0),
+            (0.0, 90.0),
+            (0.0, -90.0),
+            (60.0, 60.0),
+            (-60.0, -60.0),
+        ] {
+            assert_eq!(
+                hex_at(Real2 {
+                    x: c.x + dx,
+                    y: c.y + dy
+                }),
+                (3, -7)
+            );
         }
     }
 

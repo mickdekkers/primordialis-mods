@@ -72,13 +72,39 @@ Requires Rust (stable, MSVC toolchain) on Windows.
 cargo build --release
 ```
 
-The DLL is `target/release/primordialis_qol.dll`. For development, point the launch option at it
-directly: `--customdll "<path to repo>\target\release\primordialis_qol.dll"`.
+The DLL is `target/release/primordialis_qol.dll`.
 
-Tests: `cargo test --release`. To also check symbol resolution against an installed game:
+Tests: `cargo test --release`. Two more tests are ignored by default:
 
 ```
-PRIMORDIALIS_DIR="<game folder>" cargo test --release -- --ignored --nocapture
+# Symbol resolution against an installed game
+PRIMORDIALIS_DIR="<game folder>" cargo test --release -- --ignored --nocapture resolves_against_installed_game
+# Hooking and unhooking code other threads are running (pauses the test's other threads: run alone)
+cargo test --release -- --ignored --test-threads=1 patches_code_other_threads_are_running
 ```
+
+## Hot reload (development)
+
+The hot reload host swaps in each new build of the mod while the game keeps running:
+
+1. Build everything once, with the game closed: `cargo build --release --workspace`.
+2. Point the launch option at the host instead of the mod:
+   `--customdll "<path to repo>\target\release\primordialis_qol_hot_reload.dll"`. For a game that is
+   already running (started without it), run `target\release\primordialis_qol_inject.exe` instead.
+3. Edit, then `cargo build --release` while the game runs. About a second after the build finishes,
+   the running build removes its hooks, restores what it changed and unloads, and the new build takes
+   its place.
+
+The host loads copies of the mod from `target\release\hot_reload\`, so builds can overwrite the
+original. It logs to `primordialis_qol_hot_reload.log`; the mod keeps logging to `primordialis_qol.log`.
+
+- Hooks are only patched while the game's other threads are paused, and none of them is executing the
+  code being patched. Before a build is unloaded, the host also waits until no thread is inside it.
+- If a build can't be stopped safely within 10 seconds, it keeps running and the new one is discarded;
+  rebuild to try again. If a new build fails to start, the previous one is started again.
+- The mod allocates from its own heap, which is destroyed when a build is unloaded, so nothing stays
+  behind in the game.
+- A plain `cargo build --release` only builds the mod: the host is locked while the game runs. Rebuild
+  the host (`-p primordialis_qol_hot_reload`) with the game closed.
 
 Dependencies are pinned to exact, reviewed versions (see `Cargo.toml` and `Cargo.lock`).
