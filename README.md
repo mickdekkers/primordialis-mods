@@ -56,6 +56,8 @@ normally. The reason is written to `primordialis_qol.log`.
   stage. At the start of the `menus` stage, the game has just drawn its other map markers above the fog
   of war, and is about to draw menus on top. That's where the icons are drawn, using the game's
   `draw_cell_icons`.
+- If a feature ever crashes, it turns itself off (undoing its changes) and the rest of the mod and
+  the game keep running.
 - A pickup is shown when the map hex it's in has been explored (the same data the map uses to reveal
   walls).
 - The game only simulates pickups near you, so far-away pickups can still sit where they spawned,
@@ -63,6 +65,46 @@ normally. The reason is written to `primordialis_qol.log`.
   (with the game's own wall distance field) so icons show where the pickups will actually be. The
   game's Echolocation markers don't do this, unless `fix_echolocation_positions` is on: then pickups are moved
   there while Echolocation draws its markers, and moved back right after.
+
+## Project layout
+
+The mod is built on `modkit`, a small framework that handles everything except the features
+themselves:
+
+| Crate | What it is |
+|---|---|
+| `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons, `echolocation.rs` fixes the Echolocation markers, and `settle.rs` (shared by both) works out where pickups end up. |
+| `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing), resolved from the game's symbols. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings and logging. |
+| `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
+| `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only). |
+
+### Adding a feature
+
+A feature is a type implementing `modkit::Feature`, added to the list in `src/lib.rs`. It is called
+on the render thread as each rendering stage begins and ends. Each call gets a `Frame` with safe
+access to the game and the game's own renderers, e.g.:
+
+```rust
+static SHOW_THING: Toggle = Toggle::new("show_thing", true, "Shows the thing on the map.");
+
+#[derive(Default)]
+pub struct Thing;
+
+impl Feature for Thing {
+    fn name(&self) -> &'static str { "thing" }
+    fn settings(&self) -> Vec<&'static dyn Setting> { vec![&SHOW_THING] }
+    fn stage_begin(&mut self, frame: &Frame, stage: Stage) {
+        if stage == Stage::MENUS && SHOW_THING.get() && frame.game().map_open() {
+            // Read frame.game().pickups(), frame.camera(), ...; draw with frame.draw_circles(...).
+        }
+    }
+}
+```
+
+Settings a feature declares show up in `primordialis_qol.toml` with their description. A feature that
+changes game state temporarily undoes it in `revert`, which is called before the mod unloads or if the
+feature panics. When a feature needs something the game bindings don't have yet, add it to
+`modkit/src/game/`: resolve it by name in `bindings.rs`, then expose it through a safe accessor.
 
 ## Building
 
@@ -78,9 +120,9 @@ Tests: `cargo test --release`. Two more tests are ignored by default:
 
 ```
 # Symbol resolution against an installed game
-PRIMORDIALIS_DIR="<game folder>" cargo test --release -- --ignored --nocapture resolves_against_installed_game
+PRIMORDIALIS_DIR="<game folder>" cargo test --release -p modkit -- --ignored --nocapture resolves_against_installed_game
 # Hooking and unhooking code other threads are running (pauses the test's other threads: run alone)
-cargo test --release -- --ignored --test-threads=1 patches_code_other_threads_are_running
+cargo test --release -p modkit -- --ignored --test-threads=1 patches_code_other_threads_are_running
 ```
 
 ## Hot reload (development)
@@ -105,6 +147,7 @@ original. It logs to `primordialis_qol_hot_reload.log`; the mod keeps logging to
 - The mod allocates from its own heap, which is destroyed when a build is unloaded, so nothing stays
   behind in the game.
 - A plain `cargo build --release` only builds the mod: the host is locked while the game runs. Rebuild
-  the host (`-p primordialis_qol_hot_reload`) with the game closed.
+  the host (`-p primordialis_qol_hot_reload`) with the game closed. The host and the mod must agree on
+  `modkit_protocol::API_VERSION`; a host refuses builds that don't, and keeps the running one.
 
-Dependencies are pinned to exact, reviewed versions (see `Cargo.toml` and `Cargo.lock`).
+Dependencies are pinned to exact, reviewed versions, in the workspace's `Cargo.toml` (and `Cargo.lock`).

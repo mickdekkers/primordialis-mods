@@ -1,27 +1,23 @@
 [package]
-name = "primordialis_qol_hot_reload"
+name = "modkit"
 version = "0.1.0"
 edition = "2024"
-description = "Development tool: loads primordialis_qol.dll into Primordialis and swaps in new builds while the game runs"
+description = "Framework for Primordialis mods: hooking, hot reloading, settings and game bindings"
 license = "MIT"
 publish = false
-
-[lib]
-crate-type = ["cdylib"]
-
-[[bin]]
-name = "primordialis_qol_inject"
-path = "src/inject.rs"
 
 # Versions are pinned in the workspace's Cargo.toml.
 [dependencies]
 modkit_protocol = { path = "../protocol" }
+detour.workspace = true
+flate2.workspace = true
+zip.workspace = true
+toml.workspace = true
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Kernel",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
     "Win32_System_SystemServices",

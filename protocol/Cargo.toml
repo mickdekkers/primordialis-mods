@@ -1,0 +1,9 @@
+[package]
+name = "modkit_protocol"
+version = "0.1.0"
+edition = "2024"
+description = "The entry points a modkit mod exports for the hot reload host"
+license = "MIT"
+publish = false
+
+[dependencies]

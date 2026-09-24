@@ -36,23 +36,18 @@ use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 use windows_sys::core::BOOL;
 
+use modkit_protocol::{API_VERSION, ApiVersion, Prepare, Start, Stop};
+
 /// The mod's file name, without extension.
 const MOD_NAME: &str = "primordialis_qol";
 /// Where copies of the mod are loaded from, inside this DLL's directory.
 const COPIES_DIR: &str = "hot_reload";
 const LOG_FILE: &str = "primordialis_qol_hot_reload.log";
-/// The version of the mod's host API this host speaks (`primordialis_qol_host_api_version`).
-const HOST_API_VERSION: u32 = 2;
 
 /// How often to check the mod for changes.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 /// A new build is only loaded once its file hasn't changed for this long.
 const SETTLE_TIME: Duration = Duration::from_millis(500);
-
-type ApiVersion = unsafe extern "C" fn() -> u32;
-type Prepare = unsafe extern "C" fn(*const u16, usize) -> bool;
-type Start = unsafe extern "C" fn() -> bool;
-type Stop = unsafe extern "C" fn() -> bool;
 
 #[unsafe(no_mangle)]
 // The signature is dictated by Windows; the loader always passes our own, valid module handle.
@@ -249,20 +244,20 @@ impl Host {
         // SAFETY: The version export has this signature in every build, and the others in every build
         // with this API version.
         let entry_points = unsafe {
-            match export::<ApiVersion>(module, c"primordialis_qol_host_api_version").map(|version| version()) {
-                Some(HOST_API_VERSION) => match (
-                    export::<Prepare>(module, c"primordialis_qol_prepare"),
-                    export::<Start>(module, c"primordialis_qol_start"),
-                    export::<Stop>(module, c"primordialis_qol_stop"),
+            match export::<ApiVersion>(module, modkit_protocol::EXPORT_API_VERSION).map(|version| version()) {
+                Some(API_VERSION) => match (
+                    export::<Prepare>(module, modkit_protocol::EXPORT_PREPARE),
+                    export::<Start>(module, modkit_protocol::EXPORT_START),
+                    export::<Stop>(module, modkit_protocol::EXPORT_STOP),
                 ) {
                     (Some(prepare), Some(start), Some(stop)) => Ok((prepare, start, stop)),
                     _ => Err("it doesn't export all hot reload entry points".to_owned()),
                 },
                 Some(found) => Err(format!(
-                    "it speaks host API version {found}, this host {HOST_API_VERSION}; rebuild the host (with the \
+                    "it speaks host API version {found}, this host {API_VERSION}; rebuild the host (with the \
                      game closed)"
                 )),
-                None => Err("it doesn't export the hot reload entry points".to_owned()),
+                None => Err("it doesn't export the hot reload entry points (built for an older host?)".to_owned()),
             }
         };
         match entry_points {

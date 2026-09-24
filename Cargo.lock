@@ -118,20 +118,33 @@ dependencies = [
 ]
 
 [[package]]
-name = "primordialis_qol"
+name = "modkit"
 version = "0.1.0"
 dependencies = [
  "detour",
  "flate2",
+ "modkit_protocol",
  "toml",
  "windows-sys",
  "zip",
 ]
 
 [[package]]
+name = "modkit_protocol"
+version = "0.1.0"
+
+[[package]]
+name = "primordialis_qol"
+version = "0.1.0"
+dependencies = [
+ "modkit",
+]
+
+[[package]]
 name = "primordialis_qol_hot_reload"
 version = "0.1.0"
 dependencies = [
+ "modkit_protocol",
  "windows-sys",
 ]
 

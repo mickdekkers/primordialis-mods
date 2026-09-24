@@ -22,7 +22,7 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE, WaitForSingleObject,
 };
 
-const HOST_DLL: &str = "primordialis_qol_hot_reload.dll";
+const HOST_DLL: &str = modkit_protocol::HOST_MODULE;
 const MOD_DLL: &str = "primordialis_qol.dll";
 /// The game's executables: the version selector starts one of the builds.
 const GAME_EXES: &[&str] = &["primordialis.exe", "primordialis_avx.exe", "primordialis_sse3.exe"];
