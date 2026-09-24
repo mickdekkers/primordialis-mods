@@ -1,4 +1,6 @@
-//! Primordialis QoL mod: shows the icon of every cell pickup on the map, for areas you have explored.
+//! Primordialis QoL mod: shows the icon of every cell pickup on the map, for areas you have explored,
+//! spreads out icons that overlap under the mouse and shows the game's tooltip for the one it points
+//! at, and shows those icons and the Echolocation mutation's markers where pickups will settle.
 //!
 //! Loaded by the game itself through its `--customdll "primordialis_qol.dll"` launch option (or by the
 //! hot reload host during development). Everything about loading, hooking and reading the game is

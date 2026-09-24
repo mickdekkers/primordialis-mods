@@ -6,6 +6,17 @@ renderer, so they look like the pickups do in the world, and they fade in and ou
 Combo pickups get the game's combo coloring plus a ring of rainbow dots, standing in for the particle
 ring they have in the world.
 
+- **Spreading out piles:** pointing at icons that overlap spreads them out onto a grid, with lines to
+  where their pickups are, so you can tell them apart. While you point at an icon, the ones around it
+  fade, so it stands out.
+- **Tooltips:** the icon under the mouse gets the game's own tooltip for that cell: its name,
+  description, cost, genome size, and what picking it up would change.
+- **Icons where pickups will be:** far-away pickups can sit inside rock until you get close; icons show
+  where they'll end up. The Echolocation mutation's markers get the same fix.
+- Nothing shows up twice: pickups spread out on the map aren't drawn in the world or marked by
+  Echolocation meanwhile, and the game's own tooltip for the pickup under the mouse in the world is
+  hidden while the map shows one.
+
 ## Install
 
 1. Download `primordialis_qol.dll` and put it in the game folder, next to `primordialis.exe`.
@@ -30,6 +41,8 @@ file (for example, ones added in a newer version of the mod) are added back with
 | Setting | Default | Effect |
 |---|---|---|
 | `fix_icon_positions` | `true` | Shows map icons where pickups will actually be, not inside rock where they spawned (see below). |
+| `spread_clusters` | `true` | Spreads out map icons that overlap while the mouse is over them, so you can tell them apart. |
+| `show_tooltips` | `true` | Shows the game's tooltip for the cell of the map icon under the mouse. |
 | `fix_echolocation_positions` | `true` | Also moves the Echolocation mutation's pickup markers out of rock, to where the pickups will actually be (see below). |
 
 ## Uninstall
@@ -57,7 +70,8 @@ normally. The reason is written to `primordialis_qol.log`.
   of war, and is about to draw menus on top. That's where the icons are drawn, using the game's
   `draw_cell_icons`.
 - If a feature ever crashes, it turns itself off (undoing its changes) and the rest of the mod and
-  the game keep running.
+  the game keep running. The same goes for a feature that needs something a game update changed,
+  when nothing else does.
 - A pickup is shown when the map hex it's in has been explored (the same data the map uses to reveal
   walls).
 - The game only simulates pickups near you, so far-away pickups can still sit where they spawned,
@@ -65,6 +79,11 @@ normally. The reason is written to `primordialis_qol.log`.
   (with the game's own wall distance field) so icons show where the pickups will actually be. The
   game's Echolocation markers don't do this, unless `fix_echolocation_positions` is on: then pickups are moved
   there while Echolocation draws its markers, and moved back right after.
+- Spread out icons are laid out on a hexagonal grid built around the icon under the mouse, which
+  stays open while the mouse is over it. Their pickups are made transparent while the game draws
+  pickups in the world, and moved out of range while Echolocation draws its markers, then restored.
+- The tooltip is drawn with the game's own `do_tooltip`, given the same arguments the game gives it
+  for the pickup under the mouse in the world.
 
 ## Project layout
 
@@ -73,7 +92,7 @@ themselves:
 
 | Crate | What it is |
 |---|---|
-| `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons, `echolocation.rs` fixes the Echolocation markers, and `settle.rs` (shared by both) works out where pickups end up. |
+| `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons (with `spread.rs` laying out the grid, `fades.rs`, `leaders.rs`, `combo.rs` and `tooltip.rs`), `hide_duplicates.rs` hides what the map already shows, `echolocation.rs` fixes the Echolocation markers, and `settle.rs` (shared) works out where pickups end up. `grid_pickups.rs` shares the pickups on the grid between the features. |
 | `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing), resolved from the game's symbols. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings and logging. |
 | `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
 | `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only). |
