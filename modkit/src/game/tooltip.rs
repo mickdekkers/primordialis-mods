@@ -136,7 +136,8 @@ fn free_genome_size(game: &Game) -> f32 {
                     read::<i32>(item + bindings.cell_item_material_index),
                 )
             };
-            // Type 0 items are cells; the others are bodies.
+            // `render_game` only counts items of type 0 (a constant in its code, taken from the
+            // current build): cells. The others have a `body_id` where cells have `material_index`.
             (kind == 0).then(|| Material::get(*game, material))?
         })
         .map(|material| material.genome_size())

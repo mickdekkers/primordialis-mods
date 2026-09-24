@@ -5,7 +5,9 @@ use std::ffi::c_void;
 use super::types::{Real2, Wall, WallSample};
 use super::{Game, read, write};
 
-/// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r).
+/// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r). These are
+/// constants in `update_cells`' code (not symbols), taken from the current build: it builds hex
+/// centers from 200, 100 and 173.20508 (100√3) when it updates `map.explored`.
 const HEX_SPACING: f32 = 200.0;
 const HEX_ROW_HEIGHT: f32 = 173.205_08;
 

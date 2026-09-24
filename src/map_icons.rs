@@ -45,8 +45,9 @@ pub(crate) static SHOW_TOOLTIPS: Toggle = Toggle::new(
 /// Icon radius as a fraction of half the screen height, so icons keep the same on-screen size at any
 /// map zoom level.
 const ICON_SCREEN_RADIUS: f32 = 0.0385;
-/// A map hex's `explored` value rises from 0 to 1 as you see it. Pickups in hexes below the minimum
-/// are hidden; between minimum and full, their icons fade in, matching how the map itself fades in.
+/// A map hex's `explored` value rises from 0 to 1 as you see it, and the map shades the hex by it.
+/// Pickups in hexes below the minimum are hidden; between minimum and full, their icons fade in. Our
+/// choice, tuned by eye: the game has no such threshold.
 const EXPLORED_MIN: f32 = 0.3;
 const EXPLORED_FULL: f32 = 0.6;
 

@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex, TryLockError};
 
 use modkit::game::PickupsId;
 
+/// The map icons set it while drawing, in the `menus` stage, which comes after `cell pickups` and
+/// `racing_overlay` in a frame: the features hiding the pickups there use the previous frame's grid.
+///
 /// Only locked inside features' stage callbacks, which all run one after another on the render
 /// thread, and with `try_lock`: nothing ever waits for it. `revert` never locks it, only `withdraw`s.
 #[derive(Clone, Default)]

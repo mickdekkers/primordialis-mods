@@ -5,9 +5,12 @@
 use modkit::game::{Game, Map, Pickup, Real2};
 use rustc_hash::FxHashMap;
 
-/// The game's physics keeps pickups at least this fraction of their radius away from walls.
+/// The game's physics keeps pickups at least this fraction of their radius away from walls: a
+/// constant in `update_cells`' code (not a symbol), taken from the current build, which pushes a
+/// pickup out along the gradient while `0.5 * r > wall.dist`.
 const WALL_CLEARANCE: f32 = 0.5;
-/// The game pushes a pickup out of walls a step per tick; a few steps always get it clear.
+/// The game pushes a pickup out of walls a step per tick; a few steps always get it clear. Our
+/// choice, not the game's.
 const MAX_PUSH_OUT_STEPS: usize = 8;
 
 /// Settled positions, cached: pickups away from the camera don't move, so this saves sampling walls
