@@ -63,8 +63,12 @@ impl FrameState {
 }
 
 thread_local! {
-    // No destructor, so nothing is left behind on the game's threads when the mod is unloaded.
+    // No destructors, so nothing is left behind on the game's threads when the mod is unloaded.
     static FRAME: Cell<FrameState> = const { Cell::new(FrameState::NONE) };
+    /// Set while features are called on this thread. A stage the game begins meanwhile (in a game
+    /// function a feature called) is nested in the current one: it doesn't end the current stage,
+    /// which would then never get its `stage_end`, and isn't reported itself.
+    static DISPATCHING: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Hooks the game, and starts calling `features`. Makes no assumptions about what the game is doing:
@@ -173,6 +177,11 @@ extern "C" fn render_game(
 
 extern "C" fn begin_trace_stage(name: *const c_char) {
     let _in_flight = InFlight::enter();
+    if DISPATCHING.get() {
+        // SAFETY: Forwards the game's own argument to the original function.
+        unsafe { ORIGINAL_BEGIN_TRACE_STAGE.get()(name) };
+        return;
+    }
     let frame = FRAME.get();
     end_stage(frame);
     // SAFETY: Forwards the game's own argument to the original function.
@@ -207,7 +216,7 @@ fn dispatch(state: FrameState, mut event: impl FnMut(&mut dyn Feature, &Frame)) 
     let mut features = match running.features.try_lock() {
         Ok(features) => features,
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-        // A feature called something that rendered a stage: don't call features re-entrantly.
+        // Only if a feature called something that rendered a frame: don't call features re-entrantly.
         Err(TryLockError::WouldBlock) => return,
     };
     if !LOGGED_FIRST_FRAME.swap(true, Ordering::Relaxed) {
@@ -223,8 +232,11 @@ fn dispatch(state: FrameState, mut event: impl FnMut(&mut dyn Feature, &Frame)) 
             state.dt,
         )
     };
+    // `each` catches the features' panics, so this is always reset.
+    DISPATCHING.set(true);
     features.each(
         |feature| event(feature, &frame),
         |feature| feature.revert(frame.game()),
     );
+    DISPATCHING.set(false);
 }
