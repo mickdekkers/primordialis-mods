@@ -23,6 +23,20 @@ impl Real2 {
     pub fn is_finite(self) -> bool {
         self.x.is_finite() && self.y.is_finite()
     }
+
+    pub fn distance(self, other: Real2) -> f32 {
+        (self.x - other.x).hypot(self.y - other.y)
+    }
+
+    /// Cheaper than `distance`, for comparing distances.
+    pub fn distance_squared(self, other: Real2) -> f32 {
+        (self.x - other.x).powi(2) + (self.y - other.y).powi(2)
+    }
+
+    /// The point `t` of the way from here to `to`: here at 0, `to` at 1.
+    pub fn lerp(self, to: Real2, t: f32) -> Real2 {
+        Real2::new(self.x + (to.x - self.x) * t, self.y + (to.y - self.y) * t)
+    }
 }
 
 /// The game's `real_4x4`. The game uploads these with `transpose = GL_TRUE`, so they are stored

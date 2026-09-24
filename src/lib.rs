@@ -7,6 +7,7 @@
 mod echolocation;
 mod grid_pickups;
 mod map_icons;
+mod math;
 mod settle;
 mod spread;
 mod tooltip;

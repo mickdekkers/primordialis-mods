@@ -17,6 +17,8 @@
 use modkit::game::{PickupsId, Real2};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::math::{self, TickClock};
+
 /// Distance between neighboring grid spots, in icon radii.
 const SPACING: f32 = 2.3;
 /// The mouse points at an icon when it's within this many icon radii of its center.
@@ -45,7 +47,7 @@ pub struct Spread {
     spiral: Spiral,
     /// The pickup array the grid's pickup indices index.
     pickups: Option<PickupsId>,
-    last_frame: Option<i32>,
+    clock: TickClock,
     /// The icons drawn elsewhere this frame. Reused every frame, to avoid allocating.
     moved: Vec<Moved>,
 }
@@ -75,10 +77,7 @@ impl Spread {
         frame_number: i32,
     ) {
         self.moved.clear();
-        let ticks = match self.last_frame.replace(frame_number) {
-            Some(last) => frame_number.wrapping_sub(last).clamp(0, 30) as f32,
-            None => 0.0,
-        };
+        let ticks = self.clock.advance(frame_number, 30);
         if self.pickups != Some(pickups_id) {
             self.pickups = Some(pickups_id);
             self.close_now();
@@ -101,7 +100,7 @@ impl Spread {
             // A new grid around the icon under the mouse, if it overlaps others.
             let under_mouse = mouse.and_then(|mouse| {
                 (0..positions.len())
-                    .map(|icon| (icon, distance(positions[icon], mouse)))
+                    .map(|icon| (icon, positions[icon].distance(mouse)))
                     .filter(|&(_, d)| d <= HOVER_DISTANCE * radius)
                     .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
                     .map(|(icon, _)| icon)
@@ -118,7 +117,7 @@ impl Spread {
                     positions
                         .iter()
                         .enumerate()
-                        .any(|(other, &p)| other != icon && distance(p, at) < clear)
+                        .any(|(other, &p)| other != icon && p.distance(at) < clear)
                 })
                 .map(|icon| Grid::new(&mut self.spiral, pickups, positions, icon, radius))
                 .filter(|grid| grid.spots.len() > 1);
@@ -156,7 +155,7 @@ impl Spread {
                 icon,
                 from: positions[icon],
                 to: lattice.position(spot.hex),
-                progress: smoothstep(spot.progress),
+                progress: math::smoothstep(0.0, 1.0, spot.progress),
             });
         }
     }
@@ -279,7 +278,7 @@ impl Grid {
                         for dy in -1..=1 {
                             if let Some(icons) = squares.get_mut(&(x + dx, y + dy)) {
                                 icons.retain(|&icon| {
-                                    let d = distance_squared(positions[icon], at);
+                                    let d = positions[icon].distance_squared(at);
                                     let is_near = d < clear_squared;
                                     if is_near {
                                         near.push((d, icon));
@@ -310,7 +309,7 @@ impl Grid {
                                 squares.get(&(x + dx, y + dy)).is_some_and(|others| {
                                     others.iter().any(|&other| {
                                         other != icon
-                                            && distance_squared(positions[other], at)
+                                            && positions[other].distance_squared(at)
                                                 < overlap_squared
                                     })
                                 })
@@ -364,7 +363,7 @@ impl Grid {
         let center = lattice.round(at);
         // How far `at` is from its cell's center, in grid spacings: the spots' distances from `at`
         // are within this much of their distances from that center.
-        let off_center = distance(at, lattice.position(center)) / lattice.spacing;
+        let off_center = at.distance(lattice.position(center)) / lattice.spacing;
         let offset = |i: usize, spiral: &Spiral| {
             let (q, r) = spiral.offsets[i].0;
             Hex {
@@ -385,7 +384,7 @@ impl Grid {
 
         // Spots further along can still be nearer to `at`, up to twice its distance off center.
         let hex = offset(first, spiral);
-        let mut best = (distance(lattice.position(hex), at) / lattice.spacing, hex);
+        let mut best = (lattice.position(hex).distance(at) / lattice.spacing, hex);
         let mut i = first + 1;
         loop {
             spiral.extend_to(i);
@@ -394,7 +393,7 @@ impl Grid {
             }
             let hex = offset(i, spiral);
             if !self.taken.contains(&hex) {
-                let d = distance(lattice.position(hex), at) / lattice.spacing;
+                let d = lattice.position(hex).distance(at) / lattice.spacing;
                 if d < best.0 {
                     best = (d, hex);
                 }
@@ -474,7 +473,7 @@ impl Spiral {
                 .map(|hex| {
                     (
                         (hex.q, hex.r),
-                        distance(unit.position(hex), Real2::default()),
+                        unit.position(hex).distance(Real2::default()),
                     )
                 })
                 .collect();
@@ -562,19 +561,6 @@ fn hex_ring(center: Hex, ring: i32) -> impl Iterator<Item = Hex> {
     })
 }
 
-fn distance(a: Real2, b: Real2) -> f32 {
-    (a.x - b.x).hypot(a.y - b.y)
-}
-
-fn distance_squared(a: Real2, b: Real2) -> f32 {
-    (a.x - b.x).powi(2) + (a.y - b.y).powi(2)
-}
-
-fn smoothstep(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,7 +574,7 @@ mod tests {
         let mut gap = f32::INFINITY;
         for (i, &a) in points.iter().enumerate() {
             for &b in &points[i + 1..] {
-                gap = gap.min(distance(a, b));
+                gap = gap.min(a.distance(b));
             }
         }
         gap
@@ -607,14 +593,11 @@ mod tests {
         for &icon in &off {
             let p = positions[icon];
             for &spot in &spots {
-                assert!(
-                    distance(p, spot) >= CLEAR_DISTANCE * radius - 1e-3,
-                    "{icon}"
-                );
+                assert!(p.distance(spot) >= CLEAR_DISTANCE * radius - 1e-3, "{icon}");
             }
             if grid.bounds.contains(&lattice, p, reach) {
                 for &other in &off {
-                    let d = distance(positions[other], p);
+                    let d = positions[other].distance(p);
                     assert!(
                         other == icon || d >= OVERLAP_DISTANCE * radius,
                         "{icon}, {other}"
@@ -658,7 +641,7 @@ mod tests {
         };
         let within = (0..=spiral.rings)
             .flat_map(|ring| hex_ring(Hex { q: 0, r: 0 }, ring))
-            .filter(|&hex| distance(unit.position(hex), Real2::default()) < reach)
+            .filter(|&hex| unit.position(hex).distance(Real2::default()) < reach)
             .count();
         assert!(within <= complete);
     }

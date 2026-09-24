@@ -17,6 +17,7 @@ use modkit::log;
 use modkit::settings::{Setting, Toggle};
 
 use crate::grid_pickups::GridPickups;
+use crate::math::{self, TickClock};
 use crate::settle::SettledPositions;
 use crate::spread::{self, Spread};
 use crate::tooltip::Tooltip;
@@ -147,7 +148,7 @@ struct Fades {
     alphas: Vec<f32>,
     /// The opacity each is easing towards this frame, and its time constant in ticks.
     targets: Vec<(f32, f32)>,
-    last_frame: Option<i32>,
+    clock: TickClock,
 }
 
 impl Fades {
@@ -173,10 +174,7 @@ impl Fades {
     /// tick, so it slows as it arrives, and a target that keeps moving (as the mouse does) is
     /// followed smoothly.
     fn ease(&mut self, frame_number: i32) {
-        let ticks = match self.last_frame.replace(frame_number) {
-            Some(last) => frame_number.wrapping_sub(last).clamp(0, 60) as f32,
-            None => 0.0,
-        };
+        let ticks = self.clock.advance(frame_number, 60);
         for (alpha, &(target, time_constant)) in self.alphas.iter_mut().zip(&self.targets) {
             *alpha += (target - *alpha) * (1.0 - (-ticks / time_constant).exp());
         }
@@ -382,7 +380,7 @@ impl MapIcons {
         self.set_on_grid(Some(game.pickups().id()));
         self.shown.clone_from(&self.positions);
         for moved in self.spread.moved() {
-            self.shown[moved.icon] = lerp(moved.from, moved.to, moved.progress);
+            self.shown[moved.icon] = moved.from.lerp(moved.to, moved.progress);
         }
         self.moved_index.clear();
         self.moved_index.resize(self.visible.len(), None);
@@ -393,7 +391,7 @@ impl MapIcons {
         // Icons on the grid can be pointed at from further, as they spread out.
         let reach = |icon: usize| {
             let progress = moved_index[icon].map_or(0.0, |index| moved[index].progress);
-            lerp_f32(
+            math::lerp(
                 spread::HOVER_DISTANCE,
                 spread::GRID_HOVER_DISTANCE,
                 progress,
@@ -401,7 +399,7 @@ impl MapIcons {
         };
         let hovered = mouse_on_map.and_then(|mouse| {
             (0..shown.len())
-                .map(|icon| (icon, distance(shown[icon], mouse)))
+                .map(|icon| (icon, shown[icon].distance(mouse)))
                 .filter(|&(icon, d)| d <= reach(icon))
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(icon, _)| icon)
@@ -413,14 +411,14 @@ impl MapIcons {
         if let Some(mouse) = mouse_on_map {
             let (inner, outer) = (SPOTLIGHT_RADIUS * radius, SPOTLIGHT_EDGE * radius);
             for (icon, visible) in self.visible.iter().enumerate() {
-                let d = distance(shown[icon], mouse);
+                let d = shown[icon].distance(mouse);
                 let alpha = match hovered {
                     Some(hovered) if hovered != icon => {
-                        lerp_f32(UNFOCUSED_ALPHA, 1.0, smoothstep(inner, outer, d))
+                        math::lerp(UNFOCUSED_ALPHA, 1.0, math::smoothstep(inner, outer, d))
                     }
                     _ => 1.0,
                 };
-                let ticks = lerp_f32(FADE_TICKS_NEAR, FADE_TICKS_FAR, (d / outer).min(1.0));
+                let ticks = math::lerp(FADE_TICKS_NEAR, FADE_TICKS_FAR, (d / outer).min(1.0));
                 self.fades.set_target(visible.pickup, alpha, ticks);
             }
         }
@@ -452,7 +450,7 @@ impl MapIcons {
             let (from, to) = (moved.from, shown[icon]);
             let visibility = moved.progress * self.visible[icon].color[3];
             let dot = if hovered == Some(icon) {
-                let alpha = lerp_f32(LEADER_ALPHA, POINTED_LEADER_ALPHA, fade) * visibility;
+                let alpha = math::lerp(LEADER_ALPHA, POINTED_LEADER_ALPHA, fade) * visibility;
                 let color = [1.0, 1.0, 1.0, alpha];
                 let width = LEADER_WIDTH * POINTED_LEADER_SCALE * radius;
                 self.lines.push(LineRenderInfo::new(from, to, width, color));
@@ -555,8 +553,9 @@ impl MapIcons {
             if is_combo {
                 color[..3].copy_from_slice(&combo_rgb);
             }
-            color[3] =
-                color[3].clamp(0.0, 1.0) * fade * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
+            color[3] = color[3].clamp(0.0, 1.0)
+                * fade
+                * math::smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
             self.visible.push(Visible {
                 pickup: index,
                 color,
@@ -619,7 +618,7 @@ fn dashed_line(
     radius: f32,
     color: [f32; 4],
 ) {
-    let length = distance(from, to);
+    let length = from.distance(to);
     let width = LEADER_WIDTH * radius;
     let period = (DASH_LENGTH + DASH_GAP) * radius;
     if !(length > 0.0 && period > 0.0) {
@@ -633,8 +632,8 @@ fn dashed_line(
         let start = k as f32 * period;
         let end = (start + dash).min(length);
         lines.push(LineRenderInfo::new(
-            lerp(from, to, start / length),
-            lerp(from, to, end / length),
+            from.lerp(to, start / length),
+            from.lerp(to, end / length),
             width,
             color,
         ));
@@ -653,23 +652,6 @@ fn combo_color(frame_number: i32) -> [f32; 3] {
     let t = f64::from(frame_number) * COMBO_SPEED;
     [0.0, 2.0 / 3.0, 1.0 / 3.0]
         .map(|phase| COMBO_BASE + COMBO_AMPLITUDE * ((t + phase * TAU) % TAU).cos() as f32)
-}
-
-fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
-    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-
-fn lerp(a: Real2, b: Real2, t: f32) -> Real2 {
-    Real2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
-}
-
-fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
-    a + (b - a) * t
-}
-
-fn distance(a: Real2, b: Real2) -> f32 {
-    (a.x - b.x).hypot(a.y - b.y)
 }
 
 #[cfg(test)]
