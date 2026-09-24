@@ -12,5 +12,8 @@ modkit::entry!(modkit::Mod {
     name: "primordialis_qol",
     title: "Primordialis QoL",
     version: env!("CARGO_PKG_VERSION"),
-    features: || vec![Box::new(map_icons::MapIcons::default()), Box::new(echolocation::EcholocationFix::default())],
+    features: || vec![
+        Box::new(map_icons::MapIcons::default()),
+        Box::new(echolocation::EcholocationFix::default())
+    ],
 });

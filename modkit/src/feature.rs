@@ -41,12 +41,21 @@ pub(crate) struct Features {
 
 impl Features {
     pub fn new(features: Vec<Box<dyn Feature>>) -> Self {
-        Features { features: features.into_iter().map(|feature| (feature, true)).collect() }
+        Features {
+            features: features
+                .into_iter()
+                .map(|feature| (feature, true))
+                .collect(),
+        }
     }
 
     /// Calls `f` on every feature that is on. A feature that panics is turned off, and `revert` is
     /// then called on it.
-    pub fn each(&mut self, mut f: impl FnMut(&mut dyn Feature), mut revert: impl FnMut(&mut dyn Feature)) {
+    pub fn each(
+        &mut self,
+        mut f: impl FnMut(&mut dyn Feature),
+        mut revert: impl FnMut(&mut dyn Feature),
+    ) {
         for (feature, on) in &mut self.features {
             if !*on {
                 continue;
@@ -60,7 +69,11 @@ impl Features {
             log::error(&format!(
                 "{} panicked, and is off until the mod is reloaded{}",
                 feature.name(),
-                if reverted { "" } else { " (undoing its changes panicked too)" }
+                if reverted {
+                    ""
+                } else {
+                    " (undoing its changes panicked too)"
+                }
             ));
         }
     }
@@ -74,7 +87,10 @@ impl Features {
     }
 
     pub fn names(&self) -> Vec<&'static str> {
-        self.features.iter().map(|(feature, _)| feature.name()).collect()
+        self.features
+            .iter()
+            .map(|(feature, _)| feature.name())
+            .collect()
     }
 }
 
@@ -92,7 +108,11 @@ mod tests {
 
     #[test]
     fn a_panicking_feature_is_reverted_and_turned_off() {
-        let mut features = Features::new(vec![Box::new(Named("a")), Box::new(Named("b")), Box::new(Named("c"))]);
+        let mut features = Features::new(vec![
+            Box::new(Named("a")),
+            Box::new(Named("b")),
+            Box::new(Named("c")),
+        ]);
         let (mut called, mut reverted) = (Vec::new(), Vec::new());
         for _ in 0..2 {
             features.each(

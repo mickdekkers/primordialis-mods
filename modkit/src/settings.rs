@@ -52,9 +52,15 @@ impl<'a> Value<'a> {
     fn from_toml(value: &'a DeValue<'a>) -> Self {
         match value {
             DeValue::Boolean(on) => Value::Bool(*on),
-            DeValue::Integer(integer) => i64::from_str_radix(&integer.as_str().replace('_', ""), integer.radix())
-                .map_or(Value::Other, Value::Integer),
-            DeValue::Float(float) => float.as_str().replace('_', "").parse().map_or(Value::Other, Value::Float),
+            DeValue::Integer(integer) => {
+                i64::from_str_radix(&integer.as_str().replace('_', ""), integer.radix())
+                    .map_or(Value::Other, Value::Integer)
+            }
+            DeValue::Float(float) => float
+                .as_str()
+                .replace('_', "")
+                .parse()
+                .map_or(Value::Other, Value::Float),
             DeValue::String(string) => Value::String(string),
             _ => Value::Other,
         }
@@ -71,7 +77,12 @@ pub struct Toggle {
 
 impl Toggle {
     pub const fn new(name: &'static str, default: bool, description: &'static str) -> Self {
-        Toggle { name, description, default, value: AtomicBool::new(default) }
+        Toggle {
+            name,
+            description,
+            default,
+            value: AtomicBool::new(default),
+        }
     }
 
     pub fn get(&self) -> bool {
@@ -97,7 +108,9 @@ impl Setting for Toggle {
     }
 
     fn set(&self, value: &Value) -> std::result::Result<(), &'static str> {
-        let Value::Bool(on) = *value else { return Err("true or false") };
+        let Value::Bool(on) = *value else {
+            return Err("true or false");
+        };
         self.value.store(on, Ordering::Relaxed);
         Ok(())
     }
@@ -128,7 +141,10 @@ struct Watcher {
 /// Loads `settings` from the file at `path`. Fails only if two settings have the same name.
 pub(crate) fn init(path: &Path, title: &str, settings: Vec<&'static dyn Setting>) -> Result<()> {
     for (i, setting) in settings.iter().enumerate() {
-        if settings[..i].iter().any(|other| other.name() == setting.name()) {
+        if settings[..i]
+            .iter()
+            .any(|other| other.name() == setting.name())
+        {
             return Err(format!("two settings are named `{}`", setting.name()));
         }
     }
@@ -143,7 +159,10 @@ pub(crate) fn init(path: &Path, title: &str, settings: Vec<&'static dyn Setting>
     if !load(&file) {
         file.settings.iter().for_each(|setting| setting.reset());
     }
-    log::info(&format!("settings: {}", describe(file.settings.iter().copied())));
+    log::info(&format!(
+        "settings: {}",
+        describe(file.settings.iter().copied())
+    ));
     *FILE.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(file));
     Ok(())
 }
@@ -151,22 +170,34 @@ pub(crate) fn init(path: &Path, title: &str, settings: Vec<&'static dyn Setting>
 /// Starts reloading the settings in the background whenever the file changes.
 pub(crate) fn start_watching() {
     let mut watcher = WATCHER.lock().unwrap_or_else(PoisonError::into_inner);
-    let Some(file) = FILE.lock().unwrap_or_else(PoisonError::into_inner).clone() else { return };
+    let Some(file) = FILE.lock().unwrap_or_else(PoisonError::into_inner).clone() else {
+        return;
+    };
     if watcher.is_some() {
         return;
     }
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let thread_stop = Arc::clone(&stop);
-    let spawned = thread::Builder::new().name("modkit settings".into()).spawn(move || watch(&file, &thread_stop));
+    let spawned = thread::Builder::new()
+        .name("modkit settings".into())
+        .spawn(move || watch(&file, &thread_stop));
     match spawned {
         Ok(thread) => *watcher = Some(Watcher { thread, stop }),
-        Err(error) => log::warn(&format!("cannot watch the settings file for changes: {error}")),
+        Err(error) => log::warn(&format!(
+            "cannot watch the settings file for changes: {error}"
+        )),
     }
 }
 
 /// Stops the background reloading, and waits until its thread has exited.
 pub(crate) fn stop_watching() {
-    let Some(watcher) = WATCHER.lock().unwrap_or_else(PoisonError::into_inner).take() else { return };
+    let Some(watcher) = WATCHER
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take()
+    else {
+        return;
+    };
     let (stopped, wake) = &*watcher.stop;
     *stopped.lock().unwrap_or_else(PoisonError::into_inner) = true;
     wake.notify_all();
@@ -178,8 +209,9 @@ fn watch(file: &File, stop: &(Mutex<bool>, Condvar)) {
     let mut last = file_version(&file.path);
     loop {
         let stopped = stopped.lock().unwrap_or_else(PoisonError::into_inner);
-        let (stopped, _) =
-            wake.wait_timeout_while(stopped, WATCH_INTERVAL, |stopped| !*stopped).unwrap_or_else(PoisonError::into_inner);
+        let (stopped, _) = wake
+            .wait_timeout_while(stopped, WATCH_INTERVAL, |stopped| !*stopped)
+            .unwrap_or_else(PoisonError::into_inner);
         if *stopped {
             return;
         }
@@ -189,19 +221,33 @@ fn watch(file: &File, stop: &(Mutex<bool>, Condvar)) {
             continue;
         }
         last = version;
-        let before: Vec<String> = file.settings.iter().map(|setting| setting.current_toml()).collect();
+        let before: Vec<String> = file
+            .settings
+            .iter()
+            .map(|setting| setting.current_toml())
+            .collect();
         // An invalid file (e.g. saved halfway through an edit) keeps the settings as they were.
         load(file);
-        let changed = file.settings.iter().zip(&before).filter(|(setting, before)| setting.current_toml() != **before);
+        let changed = file
+            .settings
+            .iter()
+            .zip(&before)
+            .filter(|(setting, before)| setting.current_toml() != **before);
         let changed: Vec<&dyn Setting> = changed.map(|(setting, _)| *setting).collect();
         if !changed.is_empty() {
-            log::info(&format!("settings changed: {}", describe(changed.into_iter())));
+            log::info(&format!(
+                "settings changed: {}",
+                describe(changed.into_iter())
+            ));
         }
     }
 }
 
 fn describe<'a>(settings: impl Iterator<Item = &'a dyn Setting>) -> String {
-    settings.map(|setting| format!("{} = {}", setting.name(), setting.current_toml())).collect::<Vec<_>>().join(", ")
+    settings
+        .map(|setting| format!("{} = {}", setting.name(), setting.current_toml()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Changes whenever the file is written, created or removed.
@@ -225,14 +271,20 @@ fn load(file: &File) -> bool {
     let present = match apply(&text, &file.settings) {
         Ok(present) => present,
         Err(error) => {
-            log::warn(&format!("{} is not valid TOML, keeping the current settings: {error}", path.display()));
+            log::warn(&format!(
+                "{} is not valid TOML, keeping the current settings: {error}",
+                path.display()
+            ));
             return false;
         }
     };
     if let Some(completed) = complete(&text, &file.header, &file.settings, &present) {
         match fs::write(path, completed) {
             Ok(()) => log::info(&format!("added missing settings to {}", path.display())),
-            Err(error) => log::warn(&format!("cannot add missing settings to {}: {error}", path.display())),
+            Err(error) => log::warn(&format!(
+                "cannot add missing settings to {}: {error}",
+                path.display()
+            )),
         }
     }
     true
@@ -240,7 +292,10 @@ fn load(file: &File) -> bool {
 
 /// Sets `settings` from `text`: those it doesn't set (or sets to an invalid value) get their default.
 /// Returns which settings `text` sets. Changes nothing if `text` isn't valid TOML.
-fn apply(text: &str, settings: &[&'static dyn Setting]) -> std::result::Result<Vec<&'static str>, toml::de::Error> {
+fn apply(
+    text: &str,
+    settings: &[&'static dyn Setting],
+) -> std::result::Result<Vec<&'static str>, toml::de::Error> {
     // `DeTable` is the `toml` crate's serde-free document parser.
     let table = DeTable::parse(text)?;
     let table = table.get_ref();
@@ -252,14 +307,20 @@ fn apply(text: &str, settings: &[&'static dyn Setting]) -> std::result::Result<V
     }
     let mut present = Vec::new();
     for setting in settings {
-        let value = table.iter().find(|(key, _)| *key.get_ref() == setting.name()).map(|(_, value)| value.get_ref());
+        let value = table
+            .iter()
+            .find(|(key, _)| *key.get_ref() == setting.name())
+            .map(|(_, value)| value.get_ref());
         let Some(value) = value else {
             setting.reset();
             continue;
         };
         present.push(setting.name());
         if let Err(expected) = setting.set(&Value::from_toml(value)) {
-            log::warn(&format!("`{}` must be {expected}, using the default", setting.name()));
+            log::warn(&format!(
+                "`{}` must be {expected}, using the default",
+                setting.name()
+            ));
             setting.reset();
         }
     }
@@ -267,12 +328,24 @@ fn apply(text: &str, settings: &[&'static dyn Setting]) -> std::result::Result<V
 }
 
 /// `text` with the settings it doesn't set appended, or `None` if it has them all.
-fn complete(text: &str, header: &str, settings: &[&'static dyn Setting], present: &[&str]) -> Option<String> {
-    let missing: Vec<_> = settings.iter().filter(|setting| !present.contains(&setting.name())).collect();
+fn complete(
+    text: &str,
+    header: &str,
+    settings: &[&'static dyn Setting],
+    present: &[&str],
+) -> Option<String> {
+    let missing: Vec<_> = settings
+        .iter()
+        .filter(|setting| !present.contains(&setting.name()))
+        .collect();
     if missing.is_empty() {
         return None;
     }
-    let mut completed = if text.trim().is_empty() { header.to_owned() } else { text.to_owned() };
+    let mut completed = if text.trim().is_empty() {
+        header.to_owned()
+    } else {
+        text.to_owned()
+    };
     if !completed.ends_with('\n') {
         completed.push('\n');
     }
@@ -281,7 +354,11 @@ fn complete(text: &str, header: &str, settings: &[&'static dyn Setting], present
         for line in setting.description().lines() {
             completed.push_str(&format!("# {line}\n"));
         }
-        completed.push_str(&format!("{} = {}\n", setting.name(), setting.default_toml()));
+        completed.push_str(&format!(
+            "{} = {}\n",
+            setting.name(),
+            setting.default_toml()
+        ));
     }
     Some(completed)
 }
@@ -294,7 +371,11 @@ mod tests {
 
     // Each test has its own settings: tests run in parallel.
     fn test_file(path: PathBuf, settings: Vec<&'static dyn Setting>) -> File {
-        File { path, header: HEADER.to_owned(), settings }
+        File {
+            path,
+            header: HEADER.to_owned(),
+            settings,
+        }
     }
 
     #[test]
@@ -303,7 +384,10 @@ mod tests {
         static B: Toggle = Toggle::new("b", false, "Turns on B.");
         let settings: Vec<&'static dyn Setting> = vec![&A, &B];
         let file = complete("", HEADER, &settings, &[]).unwrap();
-        assert_eq!(file, "# Test settings.\n\n# Turns on A.\n# Over two lines.\na = true\n\n# Turns on B.\nb = false\n");
+        assert_eq!(
+            file,
+            "# Test settings.\n\n# Turns on A.\n# Over two lines.\na = true\n\n# Turns on B.\nb = false\n"
+        );
         B.set(&Value::Bool(true)).unwrap();
         let present = apply(&file, &settings).unwrap();
         assert!(A.get() && !B.get());
@@ -339,7 +423,11 @@ mod tests {
     fn values_are_converted_from_toml() {
         let table = DeTable::parse("b = true\ni = 0x1_F\nf = 1_000.5\ns = 'x'\na = [1]").unwrap();
         let value = |name: &str| {
-            let (_, value) = table.get_ref().iter().find(|(key, _)| *key.get_ref() == name).unwrap();
+            let (_, value) = table
+                .get_ref()
+                .iter()
+                .find(|(key, _)| *key.get_ref() == name)
+                .unwrap();
             Value::from_toml(value.get_ref())
         };
         assert_eq!(value("b"), Value::Bool(true));
@@ -361,12 +449,19 @@ mod tests {
         assert!(load(&file));
         let created = fs::read_to_string(&file.path).unwrap();
         assert!(load(&file));
-        assert_eq!(fs::read_to_string(&file.path).unwrap(), created, "a complete file is left alone");
+        assert_eq!(
+            fs::read_to_string(&file.path).unwrap(),
+            created,
+            "a complete file is left alone"
+        );
 
         fs::write(&file.path, "b = false\n").unwrap();
         assert!(load(&file));
         assert!(A.get() && !B.get());
-        assert_eq!(fs::read_to_string(&file.path).unwrap(), "b = false\n\n# A.\na = true\n");
+        assert_eq!(
+            fs::read_to_string(&file.path).unwrap(),
+            "b = false\n\n# A.\na = true\n"
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -82,9 +82,16 @@ impl Bindings {
         expect_size(symbols, "materials_list", size_of::<usize>())?;
         expect_size(symbols, "n_materials", size_of::<i32>())?;
         // A static inside render_game that it fades between 0 and 1 as the map closes and opens.
-        let (map_icon_alpha, alpha_size) = symbols.function_static("render_game", "map_icon_alpha")?;
-        expect(alpha_size == size_of::<f32>(), "map_icon_alpha is no longer a float")?;
-        expect(int2.size == 8 && int2.offset("x")? == 0 && int2.offset("y")? == 4, "int_2 layout changed")?;
+        let (map_icon_alpha, alpha_size) =
+            symbols.function_static("render_game", "map_icon_alpha")?;
+        expect(
+            alpha_size == size_of::<f32>(),
+            "map_icon_alpha is no longer a float",
+        )?;
+        expect(
+            int2.size == 8 && int2.offset("x")? == 0 && int2.offset("y")? == 4,
+            "int_2 layout changed",
+        )?;
 
         let map_offset = world.offset("map")?;
         let range = map_offset + map.offset("map_range")?;
@@ -153,25 +160,40 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && wall.offset("dist")? == offset_of!(Wall, dist)
         && wall.offset("gradient")? == offset_of!(Wall, gradient);
     expect(matches, "wall_t layout changed")?;
-    expect(symbols.layout("real_2")?.size == size_of::<Real2>(), "real_2 size changed")?;
-    expect(symbols.layout("real_4x4")?.size == size_of::<Real4x4>(), "real_4x4 size changed")?;
+    expect(
+        symbols.layout("real_2")?.size == size_of::<Real2>(),
+        "real_2 size changed",
+    )?;
+    expect(
+        symbols.layout("real_4x4")?.size == size_of::<Real4x4>(),
+        "real_4x4 size changed",
+    )?;
     Ok(())
 }
 
 fn expect_size(symbols: &Symbols, variable: &str, size: usize) -> Result<()> {
     let actual = symbols.variable_size(variable)?;
-    expect(actual == size, &format!("`{variable}` is {actual} bytes, expected {size}"))
+    expect(
+        actual == size,
+        &format!("`{variable}` is {actual} bytes, expected {size}"),
+    )
 }
 
 fn expect(condition: bool, message: &str) -> Result<()> {
-    if condition { Ok(()) } else { Err(message.to_owned()) }
+    if condition {
+        Ok(())
+    } else {
+        Err(message.to_owned())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use windows_sys::Win32::System::LibraryLoader::{LOAD_LIBRARY_AS_IMAGE_RESOURCE, LoadLibraryExW};
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_AS_IMAGE_RESOURCE, LoadLibraryExW,
+    };
 
     /// Resolves the bindings against a real game install, mapping the executable as an image (nothing
     /// in it runs). Run with:
@@ -179,17 +201,31 @@ mod tests {
     #[test]
     #[ignore = "needs a Primordialis install; set PRIMORDIALIS_DIR"]
     fn resolves_against_installed_game() {
-        let game_dir = PathBuf::from(std::env::var("PRIMORDIALIS_DIR").expect("set PRIMORDIALIS_DIR"));
+        let game_dir =
+            PathBuf::from(std::env::var("PRIMORDIALIS_DIR").expect("set PRIMORDIALIS_DIR"));
         let cache_dir = std::env::temp_dir().join("primordialis_qol_test_cache");
         for exe in ["primordialis_avx.exe", "primordialis_sse3.exe"] {
-            let path: Vec<u16> = game_dir.join(exe).to_string_lossy().encode_utf16().chain(Some(0)).collect();
+            let path: Vec<u16> = game_dir
+                .join(exe)
+                .to_string_lossy()
+                .encode_utf16()
+                .chain(Some(0))
+                .collect();
             // SAFETY: Maps the executable as an image resource; none of its code runs.
-            let module = unsafe { LoadLibraryExW(path.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_AS_IMAGE_RESOURCE) };
+            let module = unsafe {
+                LoadLibraryExW(
+                    path.as_ptr(),
+                    std::ptr::null_mut(),
+                    LOAD_LIBRARY_AS_IMAGE_RESOURCE,
+                )
+            };
             assert!(!module.is_null(), "cannot map {exe}");
             // Image-resource handles have their low bits set as a marker.
             let base = module as usize & !0b11;
             // SAFETY: `base` is the mapped image, which stays mapped for the rest of the test.
-            let symbols = unsafe { super::super::symbols::load_for_image(base, &game_dir, &cache_dir) }.unwrap();
+            let symbols =
+                unsafe { super::super::symbols::load_for_image(base, &game_dir, &cache_dir) }
+                    .unwrap();
             let bindings = Bindings::resolve(&symbols).unwrap();
             println!("{exe}: base {base:#x}\n{bindings:#x?}");
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);

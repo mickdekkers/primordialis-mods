@@ -45,7 +45,12 @@ struct Prepared {
 /// # Safety
 ///
 /// Only for `DllMain`, with the arguments Windows passes it.
-pub unsafe fn dll_main(definition: &'static Mod, module: HMODULE, reason: u32, reserved: *mut c_void) -> BOOL {
+pub unsafe fn dll_main(
+    definition: &'static Mod,
+    module: HMODULE,
+    reason: u32,
+    reserved: *mut c_void,
+) -> BOOL {
     match reason {
         DLL_PROCESS_ATTACH => {
             // SAFETY: `module` is our own module handle, provided by the loader.
@@ -64,13 +69,17 @@ pub unsafe fn dll_main(definition: &'static Mod, module: HMODULE, reason: u32, r
             });
             match result {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => log::error(&format!("not active, the game runs unmodified: {error}")),
+                Ok(Err(error)) => {
+                    log::error(&format!("not active, the game runs unmodified: {error}"))
+                }
                 Err(_) => log::error("not active, the game runs unmodified: panicked during setup"),
             }
         }
         // Unloaded with `FreeLibrary` (not process exit), which only the host does, after stopping us:
         // free everything we allocated. None of our code runs anymore.
-        DLL_PROCESS_DETACH if reserved.is_null() && !RUNNING.load(Ordering::SeqCst) => alloc::destroy(),
+        DLL_PROCESS_DETACH if reserved.is_null() && !RUNNING.load(Ordering::SeqCst) => {
+            alloc::destroy()
+        }
         _ => {}
     }
     // Never fail the load: a broken mod should degrade to an unmodified game, not a crash.
@@ -81,7 +90,9 @@ pub unsafe fn dll_main(definition: &'static Mod, module: HMODULE, reason: u32, r
 /// settings and symbol cache.
 fn prepare_in(definition: &Mod, home: &Path, append_log: bool) -> Result<Prepared> {
     log::init(&home.join(format!("{}.log", definition.name)), append_log);
-    let location = module::own().and_then(module::path).map(|path| path.display().to_string());
+    let location = module::own()
+        .and_then(module::path)
+        .map(|path| path.display().to_string());
     log::info(&format!(
         "{} {} loaded from {}",
         definition.name,
@@ -89,14 +100,26 @@ fn prepare_in(definition: &Mod, home: &Path, append_log: bool) -> Result<Prepare
         location.as_deref().unwrap_or("an unknown location")
     ));
     let features = (definition.features)();
-    let declared = features.iter().flat_map(|feature| feature.settings()).collect();
-    settings::init(&home.join(format!("{}.toml", definition.name)), definition.title, declared)?;
+    let declared = features
+        .iter()
+        .flat_map(|feature| feature.settings())
+        .collect();
+    settings::init(
+        &home.join(format!("{}.toml", definition.name)),
+        definition.title,
+        declared,
+    )?;
 
     let game_exe = module::path(ptr::null_mut())?;
-    let game_dir = game_exe.parent().ok_or("game path has no parent directory")?;
+    let game_dir = game_exe
+        .parent()
+        .ok_or("game path has no parent directory")?;
     let symbols = symbols::load(game_dir, &home.join(format!("{}_cache", definition.name)))?;
     let bindings = Bindings::resolve(&symbols)?;
-    Ok(Prepared { bindings, features: Features::new(features) })
+    Ok(Prepared {
+        bindings,
+        features: Features::new(features),
+    })
 }
 
 /// Hooks the game. Makes no assumptions about what the game is doing: it may be starting up, or
@@ -153,7 +176,10 @@ pub unsafe fn prepare(definition: &'static Mod, home_dir: *const u16, home_dir_l
 /// `modkit_protocol::EXPORT_START`.
 pub fn start() -> bool {
     let result = panic::catch_unwind(|| {
-        let prepared = PREPARED.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let prepared = PREPARED
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         activate(prepared.ok_or("not prepared")?)
     });
     let error = match result {

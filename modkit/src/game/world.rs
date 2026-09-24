@@ -31,7 +31,11 @@ pub struct PickupsId {
 
 impl<'a> Pickups<'a> {
     pub(super) fn new(game: Game<'a>, address: usize, count: i32) -> Self {
-        let len = if address == 0 { 0 } else { count.max(0) as usize };
+        let len = if address == 0 {
+            0
+        } else {
+            count.max(0) as usize
+        };
         Pickups { game, address, len }
     }
 
@@ -44,7 +48,10 @@ impl<'a> Pickups<'a> {
     }
 
     pub fn id(&self) -> PickupsId {
-        PickupsId { address: self.address, len: self.len }
+        PickupsId {
+            address: self.address,
+            len: self.len,
+        }
     }
 
     pub fn get(&self, index: usize) -> Option<Pickup<'a>> {
@@ -94,8 +101,10 @@ impl<'a> Pickup<'a> {
             let index = read::<i32>(self.address + bindings.pickup_material_index);
             let materials = read::<usize>(bindings.materials_list);
             let count = read::<i32>(bindings.n_materials);
-            (materials != 0 && (0..count).contains(&index))
-                .then(|| Material { game: self.game, address: materials + index as usize * bindings.material_size })
+            (materials != 0 && (0..count).contains(&index)).then(|| Material {
+                game: self.game,
+                address: materials + index as usize * bindings.material_size,
+            })
         }
     }
 
@@ -201,7 +210,10 @@ mod tests {
     use super::*;
 
     fn center(q: i32, r: i32) -> Real2 {
-        Real2 { x: HEX_SPACING * q as f32 + 0.5 * HEX_SPACING * r as f32, y: HEX_ROW_HEIGHT * r as f32 }
+        Real2 {
+            x: HEX_SPACING * q as f32 + 0.5 * HEX_SPACING * r as f32,
+            y: HEX_ROW_HEIGHT * r as f32,
+        }
     }
 
     #[test]
@@ -216,8 +228,21 @@ mod tests {
     #[test]
     fn points_near_a_center_belong_to_its_hex() {
         let c = center(3, -7);
-        for (dx, dy) in [(90.0, 0.0), (-90.0, 0.0), (0.0, 90.0), (0.0, -90.0), (60.0, 60.0), (-60.0, -60.0)] {
-            assert_eq!(hex_at(Real2 { x: c.x + dx, y: c.y + dy }), (3, -7));
+        for (dx, dy) in [
+            (90.0, 0.0),
+            (-90.0, 0.0),
+            (0.0, 90.0),
+            (0.0, -90.0),
+            (60.0, 60.0),
+            (-60.0, -60.0),
+        ] {
+            assert_eq!(
+                hex_at(Real2 {
+                    x: c.x + dx,
+                    y: c.y + dy
+                }),
+                (3, -7)
+            );
         }
     }
 }

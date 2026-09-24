@@ -38,7 +38,12 @@ fn heap() -> *mut c_void {
     if created.is_null() {
         return ptr::null_mut();
     }
-    match HEAP.compare_exchange(ptr::null_mut(), created, Ordering::AcqRel, Ordering::Acquire) {
+    match HEAP.compare_exchange(
+        ptr::null_mut(),
+        created,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
         Ok(_) => created,
         Err(existing) => {
             // Another thread created one first.
@@ -114,7 +119,9 @@ unsafe fn allocate(layout: Layout, flags: u32) -> *mut u8 {
     }
     // Over-allocate, align within the block, and store the original pointer right before the
     // aligned block (there are at least 16 bytes before it, since the alignment is at least 32).
-    let Some(size) = layout.size().checked_add(layout.align()) else { return ptr::null_mut() };
+    let Some(size) = layout.size().checked_add(layout.align()) else {
+        return ptr::null_mut();
+    };
     // SAFETY: A valid heap handle.
     let original: *mut u8 = unsafe { HeapAlloc(heap, flags, size).cast() };
     if original.is_null() {

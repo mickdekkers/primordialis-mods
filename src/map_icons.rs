@@ -76,7 +76,9 @@ impl MapIcons {
             return;
         }
         let camera = frame.camera();
-        let Some(units_per_half_screen) = camera.world_units_per_half_screen() else { return };
+        let Some(units_per_half_screen) = camera.world_units_per_half_screen() else {
+            return;
+        };
         let radius = ICON_SCREEN_RADIUS * units_per_half_screen;
         let fade = game.map_fade();
         let frame_number = game.frame_number();
@@ -89,9 +91,15 @@ impl MapIcons {
         self.halo_dots.clear();
         let mut moved = 0;
         for pickup in pickups.iter() {
-            let Some(material) = pickup.material() else { continue };
+            let Some(material) = pickup.material() else {
+                continue;
+            };
             let spawned_at = pickup.position();
-            let pos = if fix_positions { self.settled.get(&map, &pickup) } else { spawned_at };
+            let pos = if fix_positions {
+                self.settled.get(&map, &pickup)
+            } else {
+                spawned_at
+            };
             if !pos.same_bits(spawned_at) {
                 moved += 1;
             }
@@ -104,8 +112,14 @@ impl MapIcons {
             if is_combo {
                 color[..3].copy_from_slice(&combo_rgb);
             }
-            color[3] = color[3].clamp(0.0, 1.0) * fade * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
-            self.icons.push(IconRenderInfo { x: [pos.x, pos.y, 0.0], r: radius, color, uv: material.icon_uv() });
+            color[3] =
+                color[3].clamp(0.0, 1.0) * fade * smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
+            self.icons.push(IconRenderInfo {
+                x: [pos.x, pos.y, 0.0],
+                r: radius,
+                color,
+                uv: material.icon_uv(),
+            });
             if is_combo {
                 halo.add(&mut self.halo_dots, pos, color[3] * HALO_ALPHA);
             }
@@ -124,7 +138,10 @@ impl MapIcons {
         frame.draw_circles(&self.halo_dots);
         // The icon shader shades icons as if lit from this point: the top of the screen, like the
         // game's own pickups.
-        let light = Real2::new(camera.position[0], camera.position[1] + units_per_half_screen);
+        let light = Real2::new(
+            camera.position[0],
+            camera.position[1] + units_per_half_screen,
+        );
         frame.draw_cell_icons(&self.icons, light);
     }
 }
@@ -145,17 +162,27 @@ impl Halo {
             // World y points up on screen, so decreasing angles turn clockwise.
             let angle = along * TAU - spin;
             let distance = HALO_RADIUS * icon_radius;
-            (Real2::new(angle.cos() * distance, angle.sin() * distance), rainbow(along))
+            (
+                Real2::new(angle.cos() * distance, angle.sin() * distance),
+                rainbow(along),
+            )
         });
-        Halo { dots, dot_radius: HALO_DOT_RADIUS * icon_radius }
+        Halo {
+            dots,
+            dot_radius: HALO_DOT_RADIUS * icon_radius,
+        }
     }
 
     fn add(&self, out: &mut Vec<CircleRenderInfo>, center: Real2, alpha: f32) {
-        out.extend(self.dots.iter().map(|&(offset, [r, g, b])| CircleRenderInfo {
-            x: [center.x + offset.x, center.y + offset.y, 0.0],
-            r: self.dot_radius,
-            color: [r, g, b, alpha],
-        }));
+        out.extend(
+            self.dots
+                .iter()
+                .map(|&(offset, [r, g, b])| CircleRenderInfo {
+                    x: [center.x + offset.x, center.y + offset.y, 0.0],
+                    r: self.dot_radius,
+                    color: [r, g, b, alpha],
+                }),
+        );
     }
 }
 

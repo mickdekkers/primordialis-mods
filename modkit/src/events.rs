@@ -19,7 +19,8 @@ use crate::game::{Frame, Game, Stage};
 use crate::hook::{Hook, Hooks, InFlight, Original};
 use crate::log;
 
-type RenderGame = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void, f32, *mut c_void);
+type RenderGame =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void, f32, *mut c_void);
 type BeginTraceStage = unsafe extern "C" fn(*const c_char);
 
 static ORIGINAL_RENDER_GAME: Original<RenderGame> = Original::new();
@@ -61,7 +62,12 @@ pub fn start(bindings: Bindings, features: Features) -> Result<()> {
     // recording_buffer*, float, window_t*)` and `void begin_trace_stage(char*)`.
     let hooks = unsafe {
         vec![
-            Hook::new("render_game", bindings.render_game, render_game as RenderGame, &ORIGINAL_RENDER_GAME),
+            Hook::new(
+                "render_game",
+                bindings.render_game,
+                render_game as RenderGame,
+                &ORIGINAL_RENDER_GAME,
+            ),
             Hook::new(
                 "begin_trace_stage",
                 bindings.begin_trace_stage,
@@ -71,7 +77,11 @@ pub fn start(bindings: Bindings, features: Features) -> Result<()> {
         ]
     };
     let hooks = Hooks::new(hooks)?;
-    let running = Box::into_raw(Box::new(Running { bindings, features: Mutex::new(features), hooks }));
+    let running = Box::into_raw(Box::new(Running {
+        bindings,
+        features: Mutex::new(features),
+        hooks,
+    }));
     RUNNING.store(running, Ordering::Release);
     // SAFETY: Valid until freed below or by `stop`.
     if let Err(error) = unsafe { &*running }.hooks.enable() {
@@ -96,7 +106,10 @@ pub fn stop() -> Result<()> {
     let running_ref = unsafe { &*running };
     running_ref.hooks.disable(|| {
         // No thread is inside the mod, so none holds the lock.
-        let mut features = running_ref.features.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut features = running_ref
+            .features
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         // SAFETY: The game's other threads are paused.
         let game = unsafe { Game::new(&running_ref.bindings) };
         features.revert_all(|feature| feature.revert(&game));
@@ -123,7 +136,10 @@ extern "C" fn render_game(
     window: *mut c_void,
 ) {
     let _in_flight = InFlight::enter();
-    let previous = FRAME.replace(FrameState { render_context: world_rc as usize, stage: 0 });
+    let previous = FRAME.replace(FrameState {
+        render_context: world_rc as usize,
+        stage: 0,
+    });
     // SAFETY: Forwards the game's own arguments to the original function.
     unsafe { ORIGINAL_RENDER_GAME.get()(world_rc, ui_rc, input, recording, dt, window) };
     let frame = FRAME.replace(previous);
@@ -141,11 +157,16 @@ extern "C" fn begin_trace_stage(name: *const c_char) {
     if frame.render_context == 0 {
         return;
     }
-    FRAME.set(FrameState { stage: name as usize, ..frame });
+    FRAME.set(FrameState {
+        stage: name as usize,
+        ..frame
+    });
     if !name.is_null() {
         // SAFETY: Stage names are NUL-terminated string literals.
         let stage = Stage::new(unsafe { CStr::from_ptr(name) });
-        dispatch(frame.render_context, |feature, frame| feature.stage_begin(frame, stage));
+        dispatch(frame.render_context, |feature, frame| {
+            feature.stage_begin(frame, stage)
+        });
     }
 }
 
@@ -153,7 +174,9 @@ fn end_stage(frame: FrameState) {
     if frame.render_context != 0 && frame.stage != 0 {
         // SAFETY: A stage name `begin_trace_stage` was called with.
         let stage = Stage::new(unsafe { CStr::from_ptr(frame.stage as *const c_char) });
-        dispatch(frame.render_context, |feature, frame| feature.stage_end(frame, stage));
+        dispatch(frame.render_context, |feature, frame| {
+            feature.stage_end(frame, stage)
+        });
     }
 }
 
@@ -171,5 +194,8 @@ fn dispatch(render_context: usize, mut event: impl FnMut(&mut dyn Feature, &Fram
     }
     // SAFETY: On the render thread inside `render_game`, with its world render context.
     let frame = unsafe { Frame::new(Game::new(&running.bindings), render_context) };
-    features.each(|feature| event(feature, &frame), |feature| feature.revert(frame.game()));
+    features.each(
+        |feature| event(feature, &frame),
+        |feature| feature.revert(frame.game()),
+    );
 }

@@ -7,8 +7,8 @@ use std::ptr;
 use windows_sys::Win32::Foundation::{HMODULE, MAX_PATH};
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
 use windows_sys::Win32::System::LibraryLoader::{
-    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, GetModuleFileNameW,
-    GetModuleHandleExW, GetModuleHandleW,
+    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    GetModuleFileNameW, GetModuleHandleExW, GetModuleHandleW,
 };
 use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 
@@ -25,7 +25,11 @@ pub fn own() -> Result<HMODULE> {
             &mut module,
         )
     };
-    if found == 0 { Err("cannot find the mod's own module".into()) } else { Ok(module) }
+    if found == 0 {
+        Err("cannot find the mod's own module".into())
+    } else {
+        Ok(module)
+    }
 }
 
 /// The address range of the mod DLL.
@@ -52,7 +56,8 @@ pub fn path(module: HMODULE) -> Result<PathBuf> {
     let mut buffer = vec![0u16; MAX_PATH as usize];
     loop {
         // SAFETY: The buffer is valid for `buffer.len()` UTF-16 units.
-        let len = unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+        let len = unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) }
+            as usize;
         if len == 0 {
             return Err("GetModuleFileNameW failed".into());
         }

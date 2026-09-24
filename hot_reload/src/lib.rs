@@ -67,11 +67,25 @@ pub extern "system" fn DllMain(module: HMODULE, reason: u32, _reserved: *mut c_v
 }
 
 fn run(module: HMODULE) {
-    let Some(dir) = module_path(module).and_then(|path| path.parent().map(Path::to_path_buf)) else { return };
-    let mut host = Host { log: File::create(dir.join(LOG_FILE)).ok(), generation: 0, running: None, dir };
-    host.log(&format!("hot reload host running in process {}", std::process::id()));
+    let Some(dir) = module_path(module).and_then(|path| path.parent().map(Path::to_path_buf))
+    else {
+        return;
+    };
+    let mut host = Host {
+        log: File::create(dir.join(LOG_FILE)).ok(),
+        generation: 0,
+        running: None,
+        dir,
+    };
+    host.log(&format!(
+        "hot reload host running in process {}",
+        std::process::id()
+    ));
 
-    let standalone: Vec<u16> = format!("{MOD_NAME}.dll").encode_utf16().chain(Some(0)).collect();
+    let standalone: Vec<u16> = format!("{MOD_NAME}.dll")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
     // SAFETY: A NUL-terminated module name; doesn't load anything.
     if !unsafe { GetModuleHandleW(standalone.as_ptr()) }.is_null() {
         host.log(&format!(
@@ -104,7 +118,12 @@ fn file_version(path: &Path) -> Option<(SystemTime, u64)> {
 /// it open for writing.
 fn is_settled(path: &Path, version: Option<(SystemTime, u64)>) -> bool {
     thread::sleep(SETTLE_TIME);
-    file_version(path) == version && OpenOptions::new().read(true).share_mode(FILE_SHARE_READ).open(path).is_ok()
+    file_version(path) == version
+        && OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)
+            .is_ok()
 }
 
 /// A loaded copy of the mod.
@@ -127,8 +146,13 @@ struct Host {
 
 impl Host {
     fn log(&mut self, message: &str) {
-        let Some(file) = self.log.as_mut() else { return };
-        let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        let Some(file) = self.log.as_mut() else {
+            return;
+        };
+        let seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
         let _ = writeln!(file, "[{seconds:.3}] {message}");
         let _ = file.flush();
     }
@@ -136,7 +160,9 @@ impl Host {
     /// Copies of the mod from earlier runs of the game. Ones still in use (by another instance of
     /// the game) can't be deleted, and are left alone.
     fn remove_old_copies(&mut self) {
-        let Ok(entries) = fs::read_dir(self.dir.join(COPIES_DIR)) else { return };
+        let Ok(entries) = fs::read_dir(self.dir.join(COPIES_DIR)) else {
+            return;
+        };
         for entry in entries.flatten() {
             let _ = fs::remove_dir_all(entry.path());
         }
@@ -146,12 +172,17 @@ impl Host {
         let started = Instant::now();
         self.generation += 1;
         let generation = self.generation;
-        self.log(&format!("build {generation}: {} changed, loading it", source.display()));
+        self.log(&format!(
+            "build {generation}: {} changed, loading it",
+            source.display()
+        ));
         // Everything slow happens while the running build keeps working.
         let new = match self.load_copy(source, generation) {
             Ok(new) => new,
             Err(error) => {
-                self.log(&format!("build {generation}: cannot load it, keeping the running build: {error}"));
+                self.log(&format!(
+                    "build {generation}: cannot load it, keeping the running build: {error}"
+                ));
                 return;
             }
         };
@@ -195,21 +226,32 @@ impl Host {
             }
             return;
         }
-        self.log(&format!("build {generation}: failed to start (see primordialis_qol.log)"));
+        self.log(&format!(
+            "build {generation}: failed to start (see primordialis_qol.log)"
+        ));
         unload(new);
         let Some(old) = previous else { return };
         // The previous build's copy is still on disk: bring it back.
         match self.load_copy(&old.dll, old.generation) {
             // SAFETY: The copy's entry point, checked when loading it; prepared first.
             Ok(copy) if self.prepare(&copy) && unsafe { (copy.start)() } => {
-                self.log(&format!("build {generation}: restarted build {} instead", old.generation));
+                self.log(&format!(
+                    "build {generation}: restarted build {} instead",
+                    old.generation
+                ));
                 self.running = Some(copy);
             }
             Ok(copy) => {
-                self.log(&format!("build {generation}: build {} failed to start again too", old.generation));
+                self.log(&format!(
+                    "build {generation}: build {} failed to start again too",
+                    old.generation
+                ));
                 unload(copy);
             }
-            Err(error) => self.log(&format!("build {generation}: cannot reload build {}: {error}", old.generation)),
+            Err(error) => self.log(&format!(
+                "build {generation}: cannot reload build {}: {error}",
+                old.generation
+            )),
         }
     }
 
@@ -223,10 +265,14 @@ impl Host {
     /// `DllMain` does nothing when this host is loaded; it's prepared and started separately.
     fn load_copy(&mut self, source: &Path, generation: u32) -> Result<Build, String> {
         // SAFETY: Always safe.
-        let dir = self.dir.join(COPIES_DIR).join(format!("{}-{generation}", unsafe { GetCurrentProcessId() }));
+        let dir = self
+            .dir
+            .join(COPIES_DIR)
+            .join(format!("{}-{generation}", unsafe { GetCurrentProcessId() }));
         let dll = dir.join(format!("{MOD_NAME}_{generation}.dll"));
         if source != dll {
-            fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            fs::create_dir_all(&dir)
+                .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
             fs::copy(source, &dll).map_err(|e| format!("cannot copy to {}: {e}", dll.display()))?;
             // Debuggers look for the PDB by its original name, next to the DLL.
             let pdb = source.with_file_name(format!("{MOD_NAME}.pdb"));
@@ -239,12 +285,17 @@ impl Host {
         let module = unsafe { LoadLibraryW(wide.as_ptr()) };
         if module.is_null() {
             let _ = fs::remove_dir_all(&dir);
-            return Err(format!("LoadLibrary failed: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "LoadLibrary failed: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         // SAFETY: The version export has this signature in every build, and the others in every build
         // with this API version.
         let entry_points = unsafe {
-            match export::<ApiVersion>(module, modkit_protocol::EXPORT_API_VERSION).map(|version| version()) {
+            match export::<ApiVersion>(module, modkit_protocol::EXPORT_API_VERSION)
+                .map(|version| version())
+            {
                 Some(API_VERSION) => match (
                     export::<Prepare>(module, modkit_protocol::EXPORT_PREPARE),
                     export::<Start>(module, modkit_protocol::EXPORT_START),
@@ -257,11 +308,22 @@ impl Host {
                     "it speaks host API version {found}, this host {API_VERSION}; rebuild the host (with the \
                      game closed)"
                 )),
-                None => Err("it doesn't export the hot reload entry points (built for an older host?)".to_owned()),
+                None => Err(
+                    "it doesn't export the hot reload entry points (built for an older host?)"
+                        .to_owned(),
+                ),
             }
         };
         match entry_points {
-            Ok((prepare, start, stop)) => Ok(Build { module, dir, dll, generation, prepare, start, stop }),
+            Ok((prepare, start, stop)) => Ok(Build {
+                module,
+                dir,
+                dll,
+                generation,
+                prepare,
+                start,
+                stop,
+            }),
             Err(error) => {
                 // SAFETY: Never started.
                 unsafe { FreeLibrary(module) };
@@ -293,7 +355,8 @@ fn module_path(module: HMODULE) -> Option<PathBuf> {
     let mut buffer = vec![0u16; MAX_PATH as usize];
     loop {
         // SAFETY: The buffer is valid for `buffer.len()` UTF-16 units.
-        let len = unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+        let len = unsafe { GetModuleFileNameW(module, buffer.as_mut_ptr(), buffer.len() as u32) }
+            as usize;
         if len == 0 {
             return None;
         }

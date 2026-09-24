@@ -48,7 +48,10 @@ impl<'a> Frame<'a> {
     /// As `Game::new`, on the render thread inside `render_game`, whose world `render_context*` is
     /// `render_context`.
     pub(crate) unsafe fn new(game: Game<'a>, render_context: usize) -> Self {
-        Frame { game, render_context }
+        Frame {
+            game,
+            render_context,
+        }
     }
 
     pub fn game(&self) -> &Game<'a> {
@@ -70,7 +73,9 @@ impl<'a> Frame<'a> {
     /// Draws cell icons with the game's icon renderer, into the framebuffer bound at the current
     /// stage, with the frame's camera. Icons are shaded as if lit from `light`, a world position.
     pub fn draw_cell_icons(&self, icons: &[IconRenderInfo], light: Real2) {
-        let Some(count) = draw_count(icons) else { return };
+        let Some(count) = draw_count(icons) else {
+            return;
+        };
         let camera = self.camera().matrix;
         // SAFETY: The game's `draw_cell_icons`, called on the render thread with `count` icons.
         unsafe {
@@ -82,7 +87,9 @@ impl<'a> Frame<'a> {
     /// Draws filled circles with the game's circle renderer, into the framebuffer bound at the
     /// current stage, with the frame's camera.
     pub fn draw_circles(&self, circles: &[CircleRenderInfo]) {
-        let Some(count) = draw_count(circles) else { return };
+        let Some(count) = draw_count(circles) else {
+            return;
+        };
         let camera = self.camera().matrix;
         // SAFETY: The game's `draw_circles`, called on the render thread with `count` circles.
         unsafe {
@@ -138,7 +145,10 @@ mod tests {
         data[0] = 0.02;
         data[5] = 0.01;
         data[15] = 1.0;
-        let camera = Camera { matrix: Real4x4 { data }, position: [5.0, 5.0, 0.0] };
+        let camera = Camera {
+            matrix: Real4x4 { data },
+            position: [5.0, 5.0, 0.0],
+        };
         let units = camera.world_units_per_half_screen().unwrap();
         assert!((units - 100.0).abs() < 1e-3);
     }

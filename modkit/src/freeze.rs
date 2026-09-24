@@ -10,13 +10,16 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
-use windows_sys::Win32::System::Diagnostics::Debug::{CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext};
+use windows_sys::Win32::System::Diagnostics::Debug::{
+    CONTEXT, CONTEXT_CONTROL_AMD64, GetThreadContext,
+};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetThreadId, OpenThread, ResumeThread,
-    SuspendThread, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetThreadId, OpenThread,
+    ResumeThread, SuspendThread, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION,
+    THREAD_SUSPEND_RESUME,
 };
 
 use crate::Result;
@@ -60,7 +63,9 @@ pub struct Paused {
 impl Paused {
     /// Whether any paused thread is executing code in one of `ranges`.
     pub fn any_executing_in(&self, ranges: &[Range<usize>]) -> bool {
-        self.threads.iter().any(|&(_, ip)| ip == UNKNOWN || ranges.iter().any(|range| range.contains(&ip)))
+        self.threads
+            .iter()
+            .any(|&(_, ip)| ip == UNKNOWN || ranges.iter().any(|range| range.contains(&ip)))
     }
 
     /// Suspends `thread` and records where it is, taking ownership of the handle. Returns false if
@@ -81,7 +86,11 @@ impl Paused {
             // Also waits until the thread is actually suspended.
             let mut context: AlignedContext = std::mem::zeroed();
             context.0.ContextFlags = CONTEXT_CONTROL_AMD64;
-            let ip = if GetThreadContext(thread, &mut context.0) != 0 { context.0.Rip as usize } else { UNKNOWN };
+            let ip = if GetThreadContext(thread, &mut context.0) != 0 {
+                context.0.Rip as usize
+            } else {
+                UNKNOWN
+            };
             self.threads.push((thread, ip));
         }
         true
@@ -113,7 +122,9 @@ enum Pausing {
 /// Pauses the other threads, each as soon as it's found. A thread created meanwhile is found too,
 /// since the iteration ends with the newest threads.
 fn pause_by_iterating(capacity: usize) -> Pausing {
-    let mut paused = Paused { threads: Vec::with_capacity(capacity) };
+    let mut paused = Paused {
+        threads: Vec::with_capacity(capacity),
+    };
     // SAFETY: Thread handles from `NtGetNextThread` with `THREAD_ACCESS`; each is either owned by
     // `paused` or closed.
     unsafe {
@@ -123,7 +134,8 @@ fn pause_by_iterating(capacity: usize) -> Pausing {
         let mut own: HANDLE = ptr::null_mut();
         let failure = loop {
             let mut next = ptr::null_mut();
-            let status = NtGetNextThread(GetCurrentProcess(), cursor, THREAD_ACCESS, 0, 0, &mut next);
+            let status =
+                NtGetNextThread(GetCurrentProcess(), cursor, THREAD_ACCESS, 0, 0, &mut next);
             if !own.is_null() {
                 CloseHandle(own);
                 own = ptr::null_mut();
@@ -156,7 +168,9 @@ fn pause_by_iterating(capacity: usize) -> Pausing {
 /// between isn't paused; it would have to reach the patched code within milliseconds of starting.
 fn pause_with_toolhelp() -> Result<Paused> {
     let ids = other_thread_ids()?;
-    let mut paused = Paused { threads: Vec::with_capacity(ids.len()) };
+    let mut paused = Paused {
+        threads: Vec::with_capacity(ids.len()),
+    };
     for id in ids {
         // SAFETY: Opens a thread by ID; `add` takes ownership of the handle.
         unsafe {
@@ -219,9 +233,15 @@ pub struct Stats {
 /// threads in between so the game keeps running. Fails after `timeout`.
 ///
 /// `attempt` runs while the threads are paused: see the module documentation for what it must not do.
-pub fn while_paused<T>(timeout: Duration, mut attempt: impl FnMut(&Paused) -> Option<T>) -> Result<(T, Stats)> {
+pub fn while_paused<T>(
+    timeout: Duration,
+    mut attempt: impl FnMut(&Paused) -> Option<T>,
+) -> Result<(T, Stats)> {
     let deadline = Instant::now() + timeout;
-    let mut stats = Stats { attempts: 0, longest_pause: Duration::ZERO };
+    let mut stats = Stats {
+        attempts: 0,
+        longest_pause: Duration::ZERO,
+    };
     let mut capacity = 256;
     loop {
         let started = Instant::now();
@@ -292,7 +312,8 @@ mod tests {
             .collect();
 
         // SAFETY: Both functions have the same signature.
-        let detour = unsafe { RawDetour::new(target as *const (), replacement as *const ()) }.unwrap();
+        let detour =
+            unsafe { RawDetour::new(target as *const (), replacement as *const ()) }.unwrap();
         let start = target as *const () as usize;
         let prologue = start + 1..start + 16;
         let retries = AtomicUsize::new(0);
@@ -305,7 +326,16 @@ mod tests {
                     return None;
                 }
                 // SAFETY: No other thread runs, or executes the prologue.
-                Some(unsafe { if enable { detour.enable() } else { detour.disable() } }.is_ok())
+                Some(
+                    unsafe {
+                        if enable {
+                            detour.enable()
+                        } else {
+                            detour.disable()
+                        }
+                    }
+                    .is_ok(),
+                )
             });
             let (toggled, stats) = toggled.unwrap();
             assert!(toggled);

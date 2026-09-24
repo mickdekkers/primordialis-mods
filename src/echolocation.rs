@@ -84,14 +84,18 @@ impl EcholocationFix {
         // pickup is only where the physics would have put it anyway.
         if self.moved.pickups == Some(pickups.id()) {
             for &(index, original, written) in &self.moved.positions {
-                let Some(pickup) = pickups.get(index) else { continue };
+                let Some(pickup) = pickups.get(index) else {
+                    continue;
+                };
                 if pickup.position().same_bits(written) {
                     pickup.set_position(original);
                 }
             }
         } else if !self.logged_unrestored {
             self.logged_unrestored = true;
-            log::warn("pickups changed while moved for Echolocation; left them at the moved positions");
+            log::warn(
+                "pickups changed while moved for Echolocation; left them at the moved positions",
+            );
         }
         self.moved.positions.clear();
     }

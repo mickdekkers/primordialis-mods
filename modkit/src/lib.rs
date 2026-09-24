@@ -122,7 +122,10 @@ mod tests {
             modkit_protocol::EXPORT_STOP,
         ] {
             let name = name.to_str().unwrap();
-            assert!(source.contains(&format!("extern \"C\" fn {name}(")), "entry! doesn't define {name}");
+            assert!(
+                source.contains(&format!("extern \"C\" fn {name}(")),
+                "entry! doesn't define {name}"
+            );
         }
     }
 }

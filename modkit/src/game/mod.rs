@@ -37,7 +37,10 @@ impl<'a> Game<'a> {
     /// For as long as the returned value is used, this thread must have exclusive use of the game's
     /// state: on the render thread inside `render_game`, or with the game's other threads paused.
     pub(crate) unsafe fn new(bindings: &'a Bindings) -> Self {
-        Game { bindings, _not_send: PhantomData }
+        Game {
+            bindings,
+            _not_send: PhantomData,
+        }
     }
 
     /// The cell pickups lying around in the world.

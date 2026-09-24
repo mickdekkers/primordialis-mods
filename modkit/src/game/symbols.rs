@@ -13,11 +13,13 @@ use std::time::Instant;
 
 use windows_sys::Win32::Foundation::{HANDLE, LocalFree};
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG, IMAGE_NT_HEADERS64,
-    IMAGEHLP_MODULEW64, IMAGEHLP_SYMBOL_TYPE_INFO, SYMBOL_INFOW, SYMOPT_FAIL_CRITICAL_ERRORS, SYMOPT_NO_PROMPTS,
-    SYMOPT_UNDNAME, SymCleanup, SymFromNameW, SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo,
-    SymEnumSymbolsW, SymInitializeW, SymLoadModuleExW, SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN, TI_GET_BITPOSITION,
-    TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME, TI_GET_SYMTAG, TI_GET_TYPEID,
+    IMAGE_DEBUG_DIRECTORY, IMAGE_DEBUG_TYPE_CODEVIEW, IMAGE_DIRECTORY_ENTRY_DEBUG,
+    IMAGE_NT_HEADERS64, IMAGEHLP_MODULEW64, IMAGEHLP_SYMBOL_TYPE_INFO, SYMBOL_INFOW,
+    SYMOPT_FAIL_CRITICAL_ERRORS, SYMOPT_NO_PROMPTS, SYMOPT_UNDNAME, SymCleanup, SymEnumSymbolsW,
+    SymFromNameW, SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo, SymInitializeW,
+    SymLoadModuleExW, SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN,
+    TI_GET_BITPOSITION, TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME,
+    TI_GET_SYMTAG, TI_GET_TYPEID,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
@@ -96,7 +98,9 @@ impl TypeLayout {
     }
 
     fn field(&self, field: &str) -> Result<&Field> {
-        self.fields.get(field).ok_or_else(|| format!("struct {} has no field `{field}`", self.name))
+        self.fields
+            .get(field)
+            .ok_or_else(|| format!("struct {} has no field `{field}`", self.name))
     }
 }
 
@@ -117,11 +121,19 @@ pub unsafe fn load_for_image(base: usize, game_dir: &Path, cache_dir: &Path) -> 
     let started = Instant::now();
     // SAFETY: Forwarded from the caller.
     let (codeview, image_size) = unsafe { read_codeview(base)? };
-    log::info(&format!("game executable expects {} ({})", codeview.pdb_name, codeview.id()));
+    log::info(&format!(
+        "game executable expects {} ({})",
+        codeview.pdb_name,
+        codeview.id()
+    ));
 
     let pdb_path = extract_pdb(game_dir, cache_dir, &codeview)?;
     let symbols = Symbols::open(&pdb_path, base, image_size, &codeview)?;
-    log::info(&format!("loaded symbols from {} in {:.0?}", pdb_path.display(), started.elapsed()));
+    log::info(&format!(
+        "loaded symbols from {} in {:.0?}",
+        pdb_path.display(),
+        started.elapsed()
+    ));
     Ok(symbols)
 }
 
@@ -156,10 +168,19 @@ unsafe fn read_codeview(base: usize) -> Result<(CodeView, u32)> {
             let mut guid = [0u8; 16];
             guid.copy_from_slice(std::slice::from_raw_parts(record.add(4), 16));
             let age = ptr::read_unaligned(record.add(20) as *const u32);
-            let path = std::ffi::CStr::from_ptr(record.add(24).cast()).to_string_lossy().into_owned();
+            let path = std::ffi::CStr::from_ptr(record.add(24).cast())
+                .to_string_lossy()
+                .into_owned();
             // The record holds the build machine's full path; the zip only has the file name.
             let pdb_name = path.rsplit(['\\', '/']).next().unwrap_or(&path).to_owned();
-            return Ok((CodeView { guid, age, pdb_name }, image_size));
+            return Ok((
+                CodeView {
+                    guid,
+                    age,
+                    pdb_name,
+                },
+                image_size,
+            ));
         }
         Err("game executable has no CodeView debug record".into())
     }
@@ -176,15 +197,24 @@ fn extract_pdb(game_dir: &Path, cache_dir: &Path, codeview: &CodeView) -> Result
     }
 
     let zip_path = game_dir.join("pdbs.zip");
-    let zip_file = File::open(&zip_path).map_err(|e| format!("cannot open {}: {e}", zip_path.display()))?;
+    let zip_file =
+        File::open(&zip_path).map_err(|e| format!("cannot open {}: {e}", zip_path.display()))?;
     let mut archive = zip::ZipArchive::new(BufReader::new(zip_file))
         .map_err(|e| format!("cannot read {}: {e}", zip_path.display()))?;
     let entry_name = archive
         .file_names()
         .find(|name| name.eq_ignore_ascii_case(&codeview.pdb_name))
         .map(str::to_owned)
-        .ok_or_else(|| format!("{} does not contain {}", zip_path.display(), codeview.pdb_name))?;
-    let mut entry = archive.by_name(&entry_name).map_err(|e| format!("cannot read {entry_name}: {e}"))?;
+        .ok_or_else(|| {
+            format!(
+                "{} does not contain {}",
+                zip_path.display(),
+                codeview.pdb_name
+            )
+        })?;
+    let mut entry = archive
+        .by_name(&entry_name)
+        .map_err(|e| format!("cannot read {entry_name}: {e}"))?;
 
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     // Extract under a temporary name so an interrupted extraction is never mistaken for a complete one.
@@ -192,7 +222,10 @@ fn extract_pdb(game_dir: &Path, cache_dir: &Path, codeview: &CodeView) -> Result
     let copied = File::create(&partial).and_then(|mut out| io::copy(&mut entry, &mut out));
     if let Err(error) = copied.and_then(|_| fs::rename(&partial, &pdb_path)) {
         let _ = fs::remove_file(&partial);
-        return Err(format!("cannot extract {entry_name} to {}: {error}", dir.display()));
+        return Err(format!(
+            "cannot extract {entry_name} to {}: {error}",
+            dir.display()
+        ));
     }
     log::info(&format!("extracted {entry_name} from pdbs.zip"));
     remove_stale_cache_entries(cache_dir, &id);
@@ -202,14 +235,21 @@ fn extract_pdb(game_dir: &Path, cache_dir: &Path, codeview: &CodeView) -> Result
 /// Deletes PDBs extracted for previous game versions. Only touches directories whose names look like
 /// our cache keys (GUID + age in hex), so nothing else can be deleted by accident.
 fn remove_stale_cache_entries(cache_dir: &Path, current_id: &str) {
-    let Ok(entries) = fs::read_dir(cache_dir) else { return };
+    let Ok(entries) = fs::read_dir(cache_dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let looks_like_key = name.len() > 32 && name.chars().all(|c| c.is_ascii_hexdigit());
         if looks_like_key && name != current_id && entry.path().is_dir() {
             match fs::remove_dir_all(entry.path()) {
-                Ok(()) => log::info(&format!("removed symbols cached for an older game version ({name})")),
-                Err(e) => log::warn(&format!("could not remove old cache {}: {e}", entry.path().display())),
+                Ok(()) => log::info(&format!(
+                    "removed symbols cached for an older game version ({name})"
+                )),
+                Err(e) => log::warn(&format!(
+                    "could not remove old cache {}: {e}",
+                    entry.path().display()
+                )),
             }
         }
     }
@@ -266,7 +306,10 @@ impl Symbols {
                 return Err("SymGetModuleInfoW64 failed".into());
             }
             let signature: [u8; 16] = std::mem::transmute(module.PdbSig70);
-            if module.SymType != SymPdb || signature != codeview.guid || module.PdbAge != codeview.age {
+            if module.SymType != SymPdb
+                || signature != codeview.guid
+                || module.PdbAge != codeview.age
+            {
                 return Err(format!(
                     "{} does not match the running game executable (expected {})",
                     pdb_path.display(),
@@ -293,24 +336,35 @@ impl Symbols {
             name: &'a str,
             found: Vec<Found>,
         }
-        unsafe extern "system" fn collect(info: *const SYMBOL_INFOW, _size: u32, context: *const c_void) -> BOOL {
+        unsafe extern "system" fn collect(
+            info: *const SYMBOL_INFOW,
+            _size: u32,
+            context: *const c_void,
+        ) -> BOOL {
             // SAFETY: DbgHelp passes a valid symbol whose name is `NameLen` characters long, and the
             // context is the `Search` passed to `SymEnumSymbolsW` below, which outlives the enumeration.
             unsafe {
                 let info = &*info;
                 let search = &mut *(context as *mut Search);
-                let symbol_name = std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
+                let symbol_name =
+                    std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
                 let symbol_name = String::from_utf16_lossy(symbol_name);
                 // Locals have no address; statics do.
                 if symbol_name.trim_end_matches('\0') == search.name && info.Address != 0 {
-                    search.found.push(Found { address: info.Address, type_id: info.TypeIndex });
+                    search.found.push(Found {
+                        address: info.Address,
+                        type_id: info.TypeIndex,
+                    });
                 }
             }
             1
         }
 
         let function_address = self.find_global(function)?.address;
-        let mut search = Search { name, found: Vec::new() };
+        let mut search = Search {
+            name,
+            found: Vec::new(),
+        };
         let wide_name = wide(name);
         // SAFETY: The callback matches DbgHelp's signature and only uses the context we pass here.
         // A zero module base makes DbgHelp enumerate the symbols of the scope set just before.
@@ -329,7 +383,11 @@ impl Symbols {
             _ if !ok => return Err(format!("cannot enumerate the variables of `{function}`")),
             [found] => found,
             [] => return Err(format!("`{function}` has no static variable `{name}`")),
-            _ => return Err(format!("`{function}` has several static variables named `{name}`")),
+            _ => {
+                return Err(format!(
+                    "`{function}` has several static variables named `{name}`"
+                ));
+            }
         };
         self.check_address(name, found.address)?;
         Ok((found.address as usize, self.type_length(found.type_id)?))
@@ -344,15 +402,23 @@ impl Symbols {
         }
         let info = &symbol.info;
         if info.Tag != SYM_TAG_FUNCTION && info.Tag != SYM_TAG_DATA {
-            return Err(format!("symbol `{name}` is not a function or variable (tag {})", info.Tag));
+            return Err(format!(
+                "symbol `{name}` is not a function or variable (tag {})",
+                info.Tag
+            ));
         }
         self.check_address(name, info.Address)?;
-        Ok(Found { address: info.Address, type_id: info.TypeIndex })
+        Ok(Found {
+            address: info.Address,
+            type_id: info.TypeIndex,
+        })
     }
 
     fn check_address(&self, name: &str, address: u64) -> Result<()> {
         if address < self.base {
-            return Err(format!("symbol `{name}` has an unexpected address {address:#x}"));
+            return Err(format!(
+                "symbol `{name}` has an unexpected address {address:#x}"
+            ));
         }
         Ok(())
     }
@@ -362,7 +428,9 @@ impl Symbols {
         let mut symbol = SymbolInfo::new();
         let wide_name = wide(type_name);
         // SAFETY: As in `address`.
-        if unsafe { SymGetTypeFromNameW(SESSION, self.base, wide_name.as_ptr(), &mut symbol.info) } == 0 {
+        if unsafe { SymGetTypeFromNameW(SESSION, self.base, wide_name.as_ptr(), &mut symbol.info) }
+            == 0
+        {
             return Err(format!("type `{type_name}` not found"));
         }
         let type_id = self.resolve_typedefs(symbol.info.TypeIndex, type_name)?;
@@ -384,7 +452,9 @@ impl Symbols {
                 continue;
             }
             let mut offset = 0u32;
-            let Some(name) = self.type_name(child) else { continue };
+            let Some(name) = self.type_name(child) else {
+                continue;
+            };
             if self.type_info(child, TI_GET_OFFSET, &mut offset).is_none() {
                 continue;
             }
@@ -394,9 +464,19 @@ impl Symbols {
                 Some(()) => Some((position, self.type_length(child)? as u64)),
                 None => None,
             };
-            fields.insert(name, Field { offset: offset as usize, bits });
+            fields.insert(
+                name,
+                Field {
+                    offset: offset as usize,
+                    bits,
+                },
+            );
         }
-        Ok(TypeLayout { name: type_name.to_owned(), size, fields })
+        Ok(TypeLayout {
+            name: type_name.to_owned(),
+            size,
+            fields,
+        })
     }
 
     /// C code declares most structs as `typedef struct name {...} name;`, so a name can resolve to a
@@ -420,7 +500,8 @@ impl Symbols {
 
     fn type_length(&self, type_id: u32) -> Result<usize> {
         let mut length = 0u64;
-        self.type_info(type_id, TI_GET_LENGTH, &mut length).ok_or("cannot get type size")?;
+        self.type_info(type_id, TI_GET_LENGTH, &mut length)
+            .ok_or("cannot get type size")?;
         Ok(length as usize)
     }
 
@@ -439,9 +520,15 @@ impl Symbols {
         }
     }
 
-    fn type_info<T>(&self, type_id: u32, request: IMAGEHLP_SYMBOL_TYPE_INFO, out: *mut T) -> Option<()> {
+    fn type_info<T>(
+        &self,
+        type_id: u32,
+        request: IMAGEHLP_SYMBOL_TYPE_INFO,
+        out: *mut T,
+    ) -> Option<()> {
         // SAFETY: Every call site passes an output buffer of the type DbgHelp documents for `request`.
-        let ok = unsafe { SymGetTypeInfo(SESSION, self.base, type_id, request, out as *mut c_void) };
+        let ok =
+            unsafe { SymGetTypeInfo(SESSION, self.base, type_id, request, out as *mut c_void) };
         (ok != 0).then_some(())
     }
 }

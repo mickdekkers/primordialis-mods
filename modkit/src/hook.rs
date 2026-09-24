@@ -51,7 +51,10 @@ pub struct Original<F> {
 
 impl<F: Copy> Original<F> {
     pub const fn new() -> Self {
-        Original { address: AtomicUsize::new(0), _function: PhantomData }
+        Original {
+            address: AtomicUsize::new(0),
+            _function: PhantomData,
+        }
     }
 
     /// The original function. Only for detours, which only run while their hook exists.
@@ -76,11 +79,21 @@ impl Hook {
     ///
     /// `F` must be a function pointer type matching the signature and calling convention of the
     /// function at `target`, which must be a function of the game.
-    pub unsafe fn new<F: Copy>(name: &'static str, target: usize, detour: F, original: &'static Original<F>) -> Self {
+    pub unsafe fn new<F: Copy>(
+        name: &'static str,
+        target: usize,
+        detour: F,
+        original: &'static Original<F>,
+    ) -> Self {
         assert_eq!(size_of::<F>(), size_of::<usize>(), "not a function pointer");
         // SAFETY: A function pointer, as guaranteed by the caller.
         let detour = unsafe { std::mem::transmute_copy::<F, usize>(&detour) };
-        Hook { name, target, detour, original: &original.address }
+        Hook {
+            name,
+            target,
+            detour,
+            original: &original.address,
+        }
     }
 
     /// The part of the function that hooking overwrites. A thread at its very first instruction is
@@ -103,21 +116,31 @@ impl Hooks {
         for hook in hooks {
             if let Some(destination) = jump_destination(hook.target) {
                 // E.g. hooked by another copy of the mod that couldn't be unloaded, or another tool.
-                return Err(format!("{} is already hooked by something else (jumps to {destination:#x})", hook.name));
+                return Err(format!(
+                    "{} is already hooked by something else (jumps to {destination:#x})",
+                    hook.name
+                ));
             }
             // SAFETY: Guaranteed by `Hook::new`.
-            let detour = unsafe { RawDetour::new(hook.target as *const (), hook.detour as *const ()) }
-                .map_err(|e| format!("cannot hook {}: {e}", hook.name))?;
-            hook.original.store(detour.trampoline() as usize, Ordering::Release);
+            let detour =
+                unsafe { RawDetour::new(hook.target as *const (), hook.detour as *const ()) }
+                    .map_err(|e| format!("cannot hook {}: {e}", hook.name))?;
+            hook.original
+                .store(detour.trampoline() as usize, Ordering::Release);
             created.push((hook, detour));
         }
-        log::info(&format!("created {} hooks in {:?}", created.len(), creating.elapsed()));
+        log::info(&format!(
+            "created {} hooks in {:?}",
+            created.len(),
+            creating.elapsed()
+        ));
         Ok(Hooks { hooks: created })
     }
 
     /// Enables every hook, or none. Detours may run as soon as this starts.
     pub fn enable(&self) -> Result<()> {
-        let prologues: Vec<Range<usize>> = self.hooks.iter().map(|(hook, _)| hook.prologue()).collect();
+        let prologues: Vec<Range<usize>> =
+            self.hooks.iter().map(|(hook, _)| hook.prologue()).collect();
         let (result, stats) = freeze::while_paused(PATCH_TIMEOUT, |paused| {
             // A thread in the middle of a prologue would resume into the middle of the patch.
             if paused.any_executing_in(&prologues) {
@@ -142,7 +165,9 @@ impl Hooks {
         for (hook, detour) in &self.hooks {
             regions.push(hook.prologue());
             regions.push(allocation_range(detour.trampoline() as usize)?);
-            if let Some(relay) = jump_destination(hook.target).filter(|&destination| destination != hook.detour) {
+            if let Some(relay) =
+                jump_destination(hook.target).filter(|&destination| destination != hook.detour)
+            {
                 regions.push(allocation_range(relay)?);
             }
         }
@@ -168,7 +193,14 @@ impl Hooks {
     unsafe fn set_enabled(&self, enabled: bool) -> Result<()> {
         let toggle = |detour: &RawDetour, enabled: bool| {
             // SAFETY: Guaranteed by the caller.
-            unsafe { if enabled { detour.enable() } else { detour.disable() } }.is_ok()
+            unsafe {
+                if enabled {
+                    detour.enable()
+                } else {
+                    detour.disable()
+                }
+            }
+            .is_ok()
         };
         for (done, (hook, detour)) in self.hooks.iter().enumerate() {
             if !toggle(detour, enabled) {
@@ -178,7 +210,10 @@ impl Hooks {
                 return Err(if enabled {
                     format!("cannot enable the {} hook", hook.name)
                 } else {
-                    format!("cannot disable the {} hook (was it patched again by something else?)", hook.name)
+                    format!(
+                        "cannot disable the {} hook (was it patched again by something else?)",
+                        hook.name
+                    )
                 });
             }
         }
@@ -214,7 +249,11 @@ fn allocation_range(address: usize) -> Result<Range<usize>> {
         // SAFETY: `VirtualQuery` accepts any address.
         unsafe {
             let mut info: MEMORY_BASIC_INFORMATION = std::mem::zeroed();
-            let written = VirtualQuery(address as *const c_void, &mut info, size_of::<MEMORY_BASIC_INFORMATION>());
+            let written = VirtualQuery(
+                address as *const c_void,
+                &mut info,
+                size_of::<MEMORY_BASIC_INFORMATION>(),
+            );
             (written != 0).then_some(info)
         }
     };

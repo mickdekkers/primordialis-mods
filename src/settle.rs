@@ -39,7 +39,10 @@ impl SettledPositions {
     pub fn get(&mut self, map: &Map, pickup: &Pickup) -> Real2 {
         let (position, radius) = (pickup.position(), pickup.radius());
         let key = [position.x.to_bits(), position.y.to_bits(), radius.to_bits()];
-        *self.cache.entry(key).or_insert_with(|| push_out_of_walls(map, position, radius))
+        *self
+            .cache
+            .entry(key)
+            .or_insert_with(|| push_out_of_walls(map, position, radius))
     }
 }
 
