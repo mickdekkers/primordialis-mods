@@ -1,7 +1,7 @@
 //! Turns the game's rendering into feature calls, by hooking two game functions:
 //!
-//! - `render_game(world_rc, ui_rc, ...)`: renders a frame. Gives the world render context (the
-//!   camera) for the frame, and marks its end.
+//! - `render_game(world_rc, ui_rc, input, ...)`: renders a frame. Gives the frame's world and UI
+//!   render contexts (their cameras and fonts) and its input (the mouse), and marks its end.
 //! - `begin_trace_stage(name)`: called at the start of every rendering stage (it only records timings
 //!   when the profiler is on). Anchoring on stage names instead of code addresses survives game
 //!   updates. A stage ends when the next begins, or when the frame ends.
@@ -42,13 +42,25 @@ static LOGGED_FIRST_FRAME: AtomicBool = AtomicBool::new(false);
 struct FrameState {
     /// The world `render_context*` of the `render_game` call in progress, or 0.
     render_context: usize,
+    /// Its UI `render_context*` and `user_input*`.
+    ui_render_context: usize,
+    input: usize,
     /// The name of the current stage, or 0.
     stage: usize,
 }
 
+impl FrameState {
+    const NONE: FrameState = FrameState {
+        render_context: 0,
+        ui_render_context: 0,
+        input: 0,
+        stage: 0,
+    };
+}
+
 thread_local! {
     // No destructor, so nothing is left behind on the game's threads when the mod is unloaded.
-    static FRAME: Cell<FrameState> = const { Cell::new(FrameState { render_context: 0, stage: 0 }) };
+    static FRAME: Cell<FrameState> = const { Cell::new(FrameState::NONE) };
 }
 
 /// Hooks the game, and starts calling `features`. Makes no assumptions about what the game is doing:
@@ -136,10 +148,18 @@ extern "C" fn render_game(
     window: *mut c_void,
 ) {
     let _in_flight = InFlight::enter();
-    let previous = FRAME.replace(FrameState {
-        render_context: world_rc as usize,
-        stage: 0,
-    });
+    // Both render contexts are always given; a frame without one isn't one features can draw in.
+    let frame = if world_rc.is_null() || ui_rc.is_null() {
+        FrameState::NONE
+    } else {
+        FrameState {
+            render_context: world_rc as usize,
+            ui_render_context: ui_rc as usize,
+            input: input as usize,
+            stage: 0,
+        }
+    };
+    let previous = FRAME.replace(frame);
     // SAFETY: Forwards the game's own arguments to the original function.
     unsafe { ORIGINAL_RENDER_GAME.get()(world_rc, ui_rc, input, recording, dt, window) };
     let frame = FRAME.replace(previous);
@@ -164,9 +184,7 @@ extern "C" fn begin_trace_stage(name: *const c_char) {
     if !name.is_null() {
         // SAFETY: Stage names are NUL-terminated string literals.
         let stage = Stage::new(unsafe { CStr::from_ptr(name) });
-        dispatch(frame.render_context, |feature, frame| {
-            feature.stage_begin(frame, stage)
-        });
+        dispatch(frame, |feature, frame| feature.stage_begin(frame, stage));
     }
 }
 
@@ -174,14 +192,12 @@ fn end_stage(frame: FrameState) {
     if frame.render_context != 0 && frame.stage != 0 {
         // SAFETY: A stage name `begin_trace_stage` was called with.
         let stage = Stage::new(unsafe { CStr::from_ptr(frame.stage as *const c_char) });
-        dispatch(frame.render_context, |feature, frame| {
-            feature.stage_end(frame, stage)
-        });
+        dispatch(frame, |feature, frame| feature.stage_end(frame, stage));
     }
 }
 
 /// Calls every feature, on the render thread inside `render_game`.
-fn dispatch(render_context: usize, mut event: impl FnMut(&mut dyn Feature, &Frame)) {
+fn dispatch(state: FrameState, mut event: impl FnMut(&mut dyn Feature, &Frame)) {
     let running = running();
     let mut features = match running.features.try_lock() {
         Ok(features) => features,
@@ -192,8 +208,15 @@ fn dispatch(render_context: usize, mut event: impl FnMut(&mut dyn Feature, &Fram
     if !LOGGED_FIRST_FRAME.swap(true, Ordering::Relaxed) {
         log::info("hooks active: rendering reached the features");
     }
-    // SAFETY: On the render thread inside `render_game`, with its world render context.
-    let frame = unsafe { Frame::new(Game::new(&running.bindings), render_context) };
+    // SAFETY: On the render thread inside `render_game`, with its render contexts and input.
+    let frame = unsafe {
+        Frame::new(
+            Game::new(&running.bindings),
+            state.render_context,
+            state.ui_render_context,
+            state.input,
+        )
+    };
     features.each(
         |feature| event(feature, &frame),
         |feature| feature.revert(frame.game()),

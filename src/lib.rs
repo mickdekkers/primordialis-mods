@@ -5,15 +5,21 @@
 //! handled by `modkit`; this crate is just the features.
 
 mod echolocation;
+mod grid_pickups;
 mod map_icons;
 mod settle;
+mod spread;
+mod tooltip;
 
 modkit::entry!(modkit::Mod {
     name: "primordialis_qol",
     title: "Primordialis QoL",
     version: env!("CARGO_PKG_VERSION"),
-    features: || vec![
-        Box::new(map_icons::MapIcons::default()),
-        Box::new(echolocation::EcholocationFix::default())
-    ],
+    features: || {
+        let grid = grid_pickups::GridPickups::default();
+        vec![
+            Box::new(map_icons::MapIcons::new(grid.clone())),
+            Box::new(echolocation::EcholocationFix::new(grid)),
+        ]
+    },
 });

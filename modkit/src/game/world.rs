@@ -1,6 +1,6 @@
 //! The world: cell pickups, their materials, and the map.
 
-use std::ffi::c_void;
+use std::ffi::{CStr, c_char, c_void};
 
 use super::types::{Real2, Wall};
 use super::{Game, read, write};
@@ -87,6 +87,18 @@ impl<'a> Pickup<'a> {
         unsafe { write(self.address + self.game.bindings.pickup_x, position) }
     }
 
+    /// Opacity, from 0 to 1. The game draws pickups in the world with it.
+    pub fn alpha(&self) -> f32 {
+        // SAFETY: `cell_pickup.alpha`, a float.
+        unsafe { read(self.address + self.game.bindings.pickup_alpha) }
+    }
+
+    /// Changes the pickup's opacity.
+    pub fn set_alpha(&self, alpha: f32) {
+        // SAFETY: As in `alpha`; any float is valid.
+        unsafe { write(self.address + self.game.bindings.pickup_alpha, alpha) }
+    }
+
     /// Radius, in world units.
     pub fn radius(&self) -> f32 {
         // SAFETY: `cell_pickup.r`, a float.
@@ -124,7 +136,17 @@ pub struct Material<'a> {
     address: usize,
 }
 
-impl Material<'_> {
+impl<'a> Material<'a> {
+    /// The cell's name, in the player's language (what the game's own tooltips show).
+    pub fn name(&self) -> Option<&'a CStr> {
+        // SAFETY: `material_t.name`, a `char*` to a NUL-terminated string the game keeps for as long
+        // as the material exists, or null.
+        unsafe {
+            let name = read::<*const c_char>(self.address + self.game.bindings.material_name);
+            (!name.is_null()).then(|| CStr::from_ptr(name))
+        }
+    }
+
     /// RGBA.
     pub fn base_color(&self) -> [f32; 4] {
         // SAFETY: `material_t.base_color`, a `real_4`.

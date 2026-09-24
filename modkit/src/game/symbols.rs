@@ -325,6 +325,84 @@ impl Symbols {
         Ok(self.find_global(name)?.address as usize)
     }
 
+    /// Address of the global function `name` that takes `params` parameters. C++ overloads share a
+    /// name, and `address` would pick one of them arbitrarily; the parameter count tells them apart
+    /// (and checks that a function without overloads still has the signature we call it with).
+    pub fn function(&self, name: &str, params: usize) -> Result<usize> {
+        struct Search<'a> {
+            name: &'a str,
+            found: Vec<Found>,
+        }
+        unsafe extern "system" fn collect(
+            info: *const SYMBOL_INFOW,
+            _size: u32,
+            context: *const c_void,
+        ) -> BOOL {
+            // SAFETY: As in `function_static`.
+            unsafe {
+                let info = &*info;
+                let search = &mut *(context as *mut Search);
+                let symbol_name =
+                    std::slice::from_raw_parts(info.Name.as_ptr(), info.NameLen as usize);
+                let symbol_name = String::from_utf16_lossy(symbol_name);
+                if info.Tag == SYM_TAG_FUNCTION
+                    && symbol_name.trim_end_matches('\0') == search.name
+                    && info.Address != 0
+                {
+                    search.found.push(Found {
+                        address: info.Address,
+                        type_id: info.TypeIndex,
+                    });
+                }
+            }
+            1
+        }
+
+        let mut search = Search {
+            name,
+            found: Vec::new(),
+        };
+        let wide_name = wide(name);
+        // SAFETY: As in `function_static`, enumerating the module's global symbols.
+        let ok = unsafe {
+            SymEnumSymbolsW(
+                SESSION,
+                self.base,
+                wide_name.as_ptr(),
+                Some(collect),
+                &mut search as *mut Search as *const c_void,
+            ) != 0
+        };
+        if !ok {
+            return Err(format!("cannot enumerate the functions named `{name}`"));
+        }
+        search.found.sort_by_key(|found| found.address);
+        search.found.dedup_by_key(|found| found.address);
+        let mut matching = Vec::new();
+        for found in &search.found {
+            // A function's type is its signature, whose children are its parameters.
+            let mut count = 0u32;
+            self.type_info(found.type_id, TI_GET_CHILDRENCOUNT, &mut count)
+                .ok_or_else(|| format!("cannot get the parameters of `{name}`"))?;
+            if count as usize == params {
+                matching.push(*found);
+            }
+        }
+        match matching[..] {
+            [found] => {
+                self.check_address(name, found.address)?;
+                Ok(found.address as usize)
+            }
+            [] if search.found.is_empty() => Err(format!("function `{name}` not found")),
+            [] => Err(format!(
+                "no function `{name}` takes {params} parameters anymore"
+            )),
+            _ => Err(format!(
+                "several functions `{name}` take {params} parameters"
+            )),
+        }
+    }
+
     /// Size of a global variable, in bytes.
     pub fn variable_size(&self, name: &str) -> Result<usize> {
         self.type_length(self.find_global(name)?.type_id)

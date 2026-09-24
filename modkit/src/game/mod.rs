@@ -14,14 +14,20 @@ pub(crate) mod symbols;
 mod types;
 mod world;
 
+use std::ffi::{CStr, c_char};
 use std::marker::PhantomData;
 use std::ptr;
 
-pub use render::{Camera, Frame, Stage};
-pub use types::{CircleRenderInfo, IconRenderInfo, Real2, Real4x4, Wall};
+pub use render::{Camera, Font, Frame, Stage};
+pub use types::{
+    CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TextParams, Wall,
+};
 pub use world::{Map, Material, Pickup, Pickups, PickupsId};
 
 use bindings::Bindings;
+
+/// `char* get_translation(char*)`.
+type GetTranslation = unsafe extern "C" fn(*const c_char) -> *const c_char;
 
 /// The game's state, while it's safe to use.
 #[derive(Clone, Copy)]
@@ -77,6 +83,17 @@ impl<'a> Game<'a> {
     pub fn frame_number(&self) -> i32 {
         // SAFETY: `w.frame_number`, an int.
         unsafe { read(self.bindings.world + self.bindings.frame_number) }
+    }
+
+    /// The text for `key` in the player's language, as in the game's `data/translations.tsv` (e.g.
+    /// `cell_MIXD_name`). The game falls back to a placeholder for missing keys.
+    pub fn translation(&self, key: &CStr) -> &'a CStr {
+        // SAFETY: The game's `get_translation`, which only reads the key, and returns a
+        // NUL-terminated string from its translation table (or a static placeholder), never null.
+        unsafe {
+            let translate: GetTranslation = std::mem::transmute(self.bindings.get_translation);
+            CStr::from_ptr(translate(key.as_ptr()))
+        }
     }
 }
 

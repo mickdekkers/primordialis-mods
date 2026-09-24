@@ -1,12 +1,13 @@
 //! Shows the Echolocation mutation's pickup markers where pickups will settle, like the map icons,
-//! instead of inside rock: pickups are moved there while the markers are drawn, and moved back right
-//! after.
+//! instead of inside rock, and hides the markers of pickups whose map icons are spread out on a grid:
+//! pickups are moved while the markers are drawn, and moved back right after.
 
 use modkit::Feature;
 use modkit::game::{Frame, Game, PickupsId, Real2, Stage};
 use modkit::log;
 use modkit::settings::{Setting, Toggle};
 
+use crate::grid_pickups::GridPickups;
 use crate::settle::SettledPositions;
 
 static FIX_ECHOLOCATION_POSITIONS: Toggle = Toggle::new(
@@ -15,8 +16,12 @@ static FIX_ECHOLOCATION_POSITIONS: Toggle = Toggle::new(
     "Also show the Echolocation mutation's pickup markers where pickups will end up, like the map icons.",
 );
 
-#[derive(Default)]
+/// The game only draws markers for pickups within range of the camera. Pickups moved here are out
+/// of range from anywhere.
+const OUT_OF_RANGE: Real2 = Real2::new(f32::MAX, f32::MAX);
+
 pub struct EcholocationFix {
+    grid: GridPickups,
     settled: SettledPositions,
     moved: Moved,
     logged_unrestored: bool,
@@ -41,7 +46,7 @@ impl Feature for EcholocationFix {
     }
 
     fn stage_begin(&mut self, frame: &Frame, stage: Stage) {
-        if stage == Stage::RACING_OVERLAY && FIX_ECHOLOCATION_POSITIONS.get() {
+        if stage == Stage::RACING_OVERLAY {
             self.move_pickups(frame.game());
         }
     }
@@ -58,21 +63,42 @@ impl Feature for EcholocationFix {
 }
 
 impl EcholocationFix {
-    /// Moves pickups that are inside walls to where they will settle, until `restore_pickups`. Only
-    /// the Echolocation markers are drawn in between, so they are the only thing that sees it.
+    pub fn new(grid: GridPickups) -> Self {
+        EcholocationFix {
+            grid,
+            settled: SettledPositions::default(),
+            moved: Moved::default(),
+            logged_unrestored: false,
+        }
+    }
+
+    /// Moves pickups that are inside walls to where they will settle, and pickups on the map icon
+    /// grid out of range, until `restore_pickups`. Only the Echolocation markers are drawn in
+    /// between, so they are the only thing that sees it.
     fn move_pickups(&mut self, game: &Game) {
         self.restore_pickups(game);
         self.settled.refresh(game);
         let (pickups, map) = (game.pickups(), game.map());
+        let fix_positions = FIX_ECHOLOCATION_POSITIONS.get();
         self.moved.pickups = Some(pickups.id());
-        for (index, pickup) in pickups.iter().enumerate() {
-            let original = pickup.position();
-            let settled = self.settled.get(&map, &pickup);
-            if !settled.same_bits(original) {
-                pickup.set_position(settled);
-                self.moved.positions.push((index, original, settled));
+        let moved = &mut self.moved.positions;
+        let settled = &mut self.settled;
+        self.grid.read(pickups.id(), |on_grid| {
+            for (index, pickup) in pickups.iter().enumerate() {
+                let original = pickup.position();
+                let to = if on_grid.binary_search(&index).is_ok() {
+                    OUT_OF_RANGE
+                } else if fix_positions {
+                    settled.get(&map, &pickup)
+                } else {
+                    continue;
+                };
+                if !to.same_bits(original) {
+                    pickup.set_position(to);
+                    moved.push((index, original, to));
+                }
             }
-        }
+        });
     }
 
     fn restore_pickups(&mut self, game: &Game) {

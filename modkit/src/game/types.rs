@@ -59,6 +59,62 @@ pub struct CircleRenderInfo {
     pub color: [f32; 4],
 }
 
+/// The game's `line_render_info`: one line for `Frame::draw_lines`, with round caps. Make one with
+/// `new`: the game stores the second point relative to the first, and half the width.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct LineRenderInfo {
+    /// The start, in world units.
+    pub(crate) x: [f32; 3],
+    /// From the start to the end.
+    pub(crate) d: [f32; 2],
+    /// Half the width, which is also how far the round caps stick out past the ends.
+    pub(crate) r: f32,
+    /// RGBA.
+    pub(crate) color: [f32; 4],
+}
+
+impl LineRenderInfo {
+    /// A line from `from` to `to`, `width` wide, in world units.
+    pub fn new(from: Real2, to: Real2, width: f32, color: [f32; 4]) -> Self {
+        LineRenderInfo {
+            x: [from.x, from.y, 0.0],
+            d: [to.x - from.x, to.y - from.y],
+            r: width / 2.0,
+            color,
+        }
+    }
+}
+
+/// The game's `text_params`: how `Frame::draw_text` lays out and styles text. All zero is the plain
+/// default: unscaled, no shadow or outline, no clipping or wrapping.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TextParams {
+    /// Size multiplier; 0 means 1.
+    pub scale: f32,
+    pub orientation: Real2,
+    /// Drop shadow offset, in UI units.
+    pub shadow: f32,
+    /// Outline width, in UI units.
+    pub outline: f32,
+    /// RGBA.
+    pub shadow_color: [f32; 4],
+    /// RGBA.
+    pub outline_color: [f32; 4],
+    pub clip_size: Real2,
+    pub wrap_width: f32,
+    pub wrap_indent: f32,
+    pub fixed_width: f32,
+}
+
+/// The game's `font_info`, only ever copied from a render context and handed back to the game.
+#[repr(C, align(8))]
+#[derive(Clone, Copy)]
+pub(crate) struct FontInfo {
+    bytes: [u8; 0xB8],
+}
+
 /// The game's `wall_t`: a sample of the wall distance field.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]

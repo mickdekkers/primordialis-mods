@@ -32,15 +32,27 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
   than symbols, such as the combo colour cycle. They are copied by hand and must be documented as
   such.
 - **Hook points:**
-  - `render_game`: frames, and the world render context (camera).
+  - `render_game(world_rc, ui_rc, input, ...)`: frames, the world render context (camera), the UI
+    render context (UI camera, fonts), and the input. The mouse is in UI units: the screen height
+    spans -1 to 1, y up.
   - `begin_trace_stage(name)`: stage boundaries. The `racing_overlay` stage (Echolocation markers)
     comes right before `menus`. When `menus` begins, the UI framebuffer is bound and the map markers
     have just been drawn: that's where the mod draws.
+  - Those are the only two stages that read the pickups one by one: `racing_overlay` draws a marker
+    for every pickup within range of the camera, and `cell pickups` queues the pickups near the
+    camera to be drawn in the world, faded by `cell_pickup.alpha`. Features change pickups for one
+    of these stages only, and change them back when it ends (and in `revert`).
+- **Features sharing state:** features are `Send` and separate, so shared state lives in an
+  `Arc<Mutex<_>>` created in `entry!`'s `features` (see `src/grid_pickups.rs`). It's only locked in
+  stage callbacks, with `try_lock`, and never in `revert`.
 - **Simulation clock:** `w.frame_number` counts simulation steps at a fixed 120 per second, so it's
   frame-rate independent. Use it for animation timing.
 - **Pickups:**
   - The game only simulates pickups near the camera; far away they can sit inside rock.
   - `is_combo` pickups only come from map generation. The sandbox combo tool can't produce one.
+    Placing another cell type next to one merges them into a combo cell ("Combo Cell").
+- **Overloads:** some game functions are C++ overloads sharing a name (`get_translation`,
+  `get_text_size`, `draw_line`). Resolve those with `Symbols::function(name, params)`.
 
 ## Invariants
 
@@ -83,9 +95,9 @@ These keep hooking and unloading safe while the game runs:
 - **The dev setup:** the Steam launch option points at `target\release\primordialis_qol_hot_reload.dll`.
   The host loads copies of the mod from `target\release\hot_reload\` and swaps in each new build
   about a second after `cargo build --release` finishes.
-- **Every build is a swap while the game runs.** Check whether it's running first
-  (`tasklist | grep -i primordialis`), and ask before building if it is. `cargo check`, `clippy` and
-  `test` don't write the DLL, so they are always safe.
+- **Every build is a swap while the game runs.** Rebuilding the mod is always fine without asking:
+  that's how changes get tested live. Build once the edits are complete, so a half-done state isn't
+  swapped in. `cargo check`, `clippy` and `test` don't write the DLL.
 - **Ask before writing to the game's memory** (e.g. with a debugger).
 - **Logs** go next to the DLL: `primordialis_qol.log` for the mod, `primordialis_qol_hot_reload.log`
   for the host. Settings are in `primordialis_qol.toml`, symbols are cached in

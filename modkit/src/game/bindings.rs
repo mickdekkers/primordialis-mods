@@ -9,7 +9,9 @@
 use std::mem::{offset_of, size_of};
 
 use super::symbols::Symbols;
-use super::types::{CircleRenderInfo, IconRenderInfo, Real2, Real4x4, Wall};
+use super::types::{
+    CircleRenderInfo, FontInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TextParams, Wall,
+};
 use crate::{Result, log};
 
 /// Game function addresses and data locations.
@@ -19,8 +21,19 @@ pub struct Bindings {
     pub begin_trace_stage: usize,
     pub draw_cell_icons: usize,
     pub draw_circles: usize,
+    /// `void draw_lines(render_context*, line_render_info*, int)`.
+    pub draw_lines: usize,
     /// `wall_t wall_map(map_t*, real_2, bool)`: the wall distance field the game's physics uses.
     pub wall_map: usize,
+    /// UI drawing: `draw_text`, `get_text_size(char*, font_info, text_params)`,
+    /// `draw_rounded_rectangle_outlined` and `draw_line(render_context*, real_2, real_2, float,
+    /// real_4*)`. The last three share their names with overloads.
+    pub draw_text: usize,
+    pub get_text_size: usize,
+    pub draw_rounded_rectangle_outlined: usize,
+    pub draw_line: usize,
+    /// `char* get_translation(char* key)`: a text in the player's language.
+    pub get_translation: usize,
 
     /// The global `world w`.
     pub world: usize,
@@ -40,6 +53,7 @@ pub struct Bindings {
     pub pickup_material_index: usize,
     pub pickup_x: usize,
     pub pickup_r: usize,
+    pub pickup_alpha: usize,
     /// The `is_combo` bitfield: byte offset of its `u32` storage and bit position.
     pub pickup_is_combo: (usize, u32),
 
@@ -49,6 +63,8 @@ pub struct Bindings {
     pub material_size: usize,
     pub material_base_color: usize,
     pub material_uv: usize,
+    /// `material_t.name` (`char*`): the cell's name in the player's language.
+    pub material_name: usize,
 
     /// `float map_icon_alpha`, a static in `render_game`: 0 when the map is closed, fading to 1 while
     /// it is open.
@@ -57,6 +73,11 @@ pub struct Bindings {
     /// `render_context.camera` (world-to-clip matrix) and `render_context.camera_pos`.
     pub rc_camera: usize,
     pub rc_camera_pos: usize,
+    /// `render_context.small_font`, `default_font`, `medium_font` and `big_font` (`font_info`).
+    pub rc_fonts: [usize; 4],
+
+    /// `user_input.mouse` (`real_2`), in UI units.
+    pub input_mouse: usize,
 }
 
 /// Offsets of `bounding_box_2 { int_2 l, u; }` fields, relative to `world`.
@@ -77,6 +98,7 @@ impl Bindings {
         let pickup = symbols.layout("cell_pickup")?;
         let material = symbols.layout("material_t")?;
         let render_context = symbols.layout("render_context")?;
+        let input = symbols.layout("user_input")?;
 
         verify_mirrored_layouts(symbols)?;
         expect_size(symbols, "materials_list", size_of::<usize>())?;
@@ -102,7 +124,14 @@ impl Bindings {
             begin_trace_stage: symbols.address("begin_trace_stage")?,
             draw_cell_icons: symbols.address("draw_cell_icons")?,
             draw_circles: symbols.address("draw_circles")?,
+            draw_lines: symbols.address("draw_lines")?,
             wall_map: symbols.address("wall_map")?,
+            draw_text: symbols.function("draw_text", 7)?,
+            get_text_size: symbols.function("get_text_size", 3)?,
+            draw_rounded_rectangle_outlined: symbols
+                .function("draw_rounded_rectangle_outlined", 7)?,
+            draw_line: symbols.function("draw_line", 5)?,
+            get_translation: symbols.function("get_translation", 1)?,
 
             world: symbols.address("w")?,
             cell_pickups: world.offset("cell_pickups")?,
@@ -121,6 +150,7 @@ impl Bindings {
             pickup_material_index: pickup.offset("material_index")?,
             pickup_x: pickup.offset("x")?,
             pickup_r: pickup.offset("r")?,
+            pickup_alpha: pickup.offset("alpha")?,
             pickup_is_combo: pickup.flag("is_combo")?,
 
             materials_list: symbols.address("materials_list")?,
@@ -128,11 +158,20 @@ impl Bindings {
             material_size: material.size,
             material_base_color: material.offset("base_color")?,
             material_uv: material.offset("uv")?,
+            material_name: material.offset("name")?,
 
             map_icon_alpha,
 
             rc_camera: render_context.offset("camera")?,
             rc_camera_pos: render_context.offset("camera_pos")?,
+            rc_fonts: [
+                render_context.offset("small_font")?,
+                render_context.offset("default_font")?,
+                render_context.offset("medium_font")?,
+                render_context.offset("big_font")?,
+            ],
+
+            input_mouse: input.offset("mouse")?,
         };
         log::info(&format!("resolved game bindings: {bindings:x?}"));
         Ok(bindings)
@@ -155,11 +194,36 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && circle.offset("r")? == offset_of!(CircleRenderInfo, r)
         && circle.offset("color")? == offset_of!(CircleRenderInfo, color);
     expect(matches, "circle_render_info layout changed")?;
+    let line = symbols.layout("line_render_info")?;
+    let matches = line.size == size_of::<LineRenderInfo>()
+        && line.offset("x")? == offset_of!(LineRenderInfo, x)
+        && line.offset("d")? == offset_of!(LineRenderInfo, d)
+        && line.offset("r")? == offset_of!(LineRenderInfo, r)
+        && line.offset("color")? == offset_of!(LineRenderInfo, color);
+    expect(matches, "line_render_info layout changed")?;
     let wall = symbols.layout("wall_t")?;
     let matches = wall.size == size_of::<Wall>()
         && wall.offset("dist")? == offset_of!(Wall, dist)
         && wall.offset("gradient")? == offset_of!(Wall, gradient);
     expect(matches, "wall_t layout changed")?;
+    let text = symbols.layout("text_params")?;
+    let matches = text.size == size_of::<TextParams>()
+        && text.offset("scale")? == offset_of!(TextParams, scale)
+        && text.offset("orientation")? == offset_of!(TextParams, orientation)
+        && text.offset("shadow")? == offset_of!(TextParams, shadow)
+        && text.offset("outline")? == offset_of!(TextParams, outline)
+        && text.offset("shadow_color")? == offset_of!(TextParams, shadow_color)
+        && text.offset("outline_color")? == offset_of!(TextParams, outline_color)
+        && text.offset("clip_size")? == offset_of!(TextParams, clip_size)
+        && text.offset("wrap_width")? == offset_of!(TextParams, wrap_width)
+        && text.offset("wrap_indent")? == offset_of!(TextParams, wrap_indent)
+        && text.offset("fixed_width")? == offset_of!(TextParams, fixed_width);
+    expect(matches, "text_params layout changed")?;
+    // Only copied as a whole, so only its size matters.
+    expect(
+        symbols.layout("font_info")?.size == size_of::<FontInfo>(),
+        "font_info size changed",
+    )?;
     expect(
         symbols.layout("real_2")?.size == size_of::<Real2>(),
         "real_2 size changed",
