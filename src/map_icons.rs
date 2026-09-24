@@ -82,15 +82,15 @@ const POINTED_LEADER_ALPHA: f32 = 1.0;
 /// the grid) fade to this opacity, and back once it doesn't.
 const UNFOCUSED_ALPHA: f32 = 0.5;
 /// Icons ease towards the opacity they should have with a time constant, in `frame_number` ticks (120
-/// per second), of the first under the mouse (~70 ms), rising with the distance from it to the second
+/// per second), of the first under the mouse (25 ms), rising with the distance from it to the second
 /// at the spotlight's edge and beyond (125 ms, so ~95% of the way there in 375 ms): what the mouse
 /// points at responds at once, and the icons around it follow smoothly.
-const FADE_TICKS_NEAR: f32 = 8.0;
+const FADE_TICKS_NEAR: f32 = 3.0;
 const FADE_TICKS_FAR: f32 = 15.0;
 /// The icons faded are those within this many icon radii of the mouse, easing back to full opacity
 /// by the second, so icons further away stay clear.
-const SPOTLIGHT_RADIUS: f32 = 4.0;
-const SPOTLIGHT_EDGE: f32 = 12.0;
+const SPOTLIGHT_RADIUS: f32 = 2.0;
+const SPOTLIGHT_EDGE: f32 = 10.0;
 /// The tooltip's second line, for combo pickups, is this light gray.
 const COMBO_LINE_COLOR: [f32; 3] = [0.75, 0.75, 0.75];
 
