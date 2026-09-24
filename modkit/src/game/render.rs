@@ -1,10 +1,8 @@
 //! Rendering: the frame being rendered, its stages, and drawing with the game's own renderers.
 
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{CStr, c_void};
 
-use super::types::{
-    CircleRenderInfo, FontInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TextParams,
-};
+use super::types::{CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4};
 use super::{Game, read};
 
 /// `void draw_cell_icons(icon_render_info*, int, real_4x4, real_2)`. The x64 ABI passes the 64-byte
@@ -24,33 +22,6 @@ const MAX_LINES_PER_DRAW: usize = (0x100_0000 - 0x30) / size_of::<LineRenderInfo
 /// second point is relative to the first (`s` in `line.glsl`), and the width is given as half of it,
 /// the distance from the line's middle to its edges (which is also how far its round caps stick out).
 type DrawLine = unsafe extern "C" fn(*const c_void, Real2, Real2, f32, *const [f32; 4]);
-/// `void draw_rounded_rectangle_outlined(render_context*, real_3 center, real_2 half_size,
-/// float corner_radius, float outline_width, real_4* fill, real_4* outline)`, with the `real_3`
-/// passed by reference.
-type DrawRoundedRectangleOutlined = unsafe extern "C" fn(
-    *const c_void,
-    *const [f32; 3],
-    Real2,
-    f32,
-    f32,
-    *const [f32; 4],
-    *const [f32; 4],
-);
-/// `void draw_text(char*, float x, float y, real_4 color, real_2 align, font_info*, text_params*)`,
-/// with the `real_4` passed by reference.
-type DrawText = unsafe extern "C" fn(
-    *const c_char,
-    f32,
-    f32,
-    *const [f32; 4],
-    Real2,
-    *const FontInfo,
-    *const TextParams,
-);
-/// `real_2 get_text_size(char*, font_info, text_params)`, with both structs passed by reference to
-/// copies the callee may change.
-type GetTextSize = unsafe extern "C" fn(*const c_char, *mut FontInfo, *mut TextParams) -> Real2;
-
 /// A rendering stage of `render_game`, named by the game's profiler markers (`begin_trace_stage`).
 /// Stages run one after another; a feature is told when each begins and ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,16 +47,6 @@ impl<'a> Stage<'a> {
     }
 }
 
-/// A font of the UI render context.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Font {
-    Small,
-    /// The one menus and tooltips use.
-    Default,
-    Medium,
-    Big,
-}
-
 /// The frame `render_game` is rendering.
 pub struct Frame<'a> {
     game: Game<'a>,
@@ -94,29 +55,47 @@ pub struct Frame<'a> {
     ui_render_context: usize,
     /// The frame's `user_input*`, or 0.
     input: usize,
+    /// Seconds since the last frame.
+    dt: f32,
 }
 
 impl<'a> Frame<'a> {
     /// # Safety
     ///
     /// As `Game::new`, on the render thread inside `render_game`, called with these world and UI
-    /// `render_context*`s and `user_input*` (which may be null).
+    /// `render_context*`s, `user_input*` (which may be null) and `dt`.
     pub(crate) unsafe fn new(
         game: Game<'a>,
         render_context: usize,
         ui_render_context: usize,
         input: usize,
+        dt: f32,
     ) -> Self {
         Frame {
             game,
             render_context,
             ui_render_context,
             input,
+            dt,
         }
     }
 
     pub fn game(&self) -> &Game<'a> {
         &self.game
+    }
+
+    /// The time since the last frame, in seconds: what the game animates its UI with.
+    pub fn dt(&self) -> f32 {
+        if self.dt.is_finite() {
+            self.dt.max(0.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// The UI `render_context*`.
+    pub(super) fn ui_render_context(&self) -> usize {
+        self.ui_render_context
     }
 
     /// The world camera this frame is rendered with.
@@ -181,7 +160,7 @@ impl<'a> Frame<'a> {
     }
 }
 
-/// Drawing lines, and the UI.
+/// Drawing lines.
 impl Frame<'_> {
     /// Draws lines with the game's line renderer, into the framebuffer bound at the current stage,
     /// with the frame's camera.
@@ -216,85 +195,6 @@ impl Frame<'_> {
                 &color,
             );
         }
-    }
-
-    /// Draws a filled rectangle with rounded corners and an outline, like the game's tooltips, in UI
-    /// units.
-    pub fn draw_ui_panel(
-        &self,
-        center: Real2,
-        half_size: Real2,
-        corner_radius: f32,
-        outline_width: f32,
-        fill: [f32; 4],
-        outline: [f32; 4],
-    ) {
-        // SAFETY: The game's `draw_rounded_rectangle_outlined`, called on the render thread with the
-        // UI render context, of which it only reads the camera and resolution.
-        unsafe {
-            let draw: DrawRoundedRectangleOutlined =
-                std::mem::transmute(self.game.bindings.draw_rounded_rectangle_outlined);
-            draw(
-                self.ui_render_context as *const c_void,
-                &[center.x, center.y, 0.0],
-                half_size,
-                corner_radius,
-                outline_width,
-                &fill,
-                &outline,
-            );
-        }
-    }
-
-    /// The width and height `text` takes when drawn with `draw_text`, in UI units.
-    pub fn text_size(&self, text: &CStr, font: Font, params: &TextParams) -> Real2 {
-        let (mut font, mut params) = (self.font(font), *params);
-        // SAFETY: The game's `get_text_size`, which reads the NUL-terminated text, with our copies of
-        // the font and parameters.
-        let size = unsafe {
-            let size: GetTextSize = std::mem::transmute(self.game.bindings.get_text_size);
-            size(text.as_ptr(), &mut font, &mut params)
-        };
-        if size.is_finite() {
-            size
-        } else {
-            Real2::default()
-        }
-    }
-
-    /// Draws `text` at `position`, in UI units. `align` is which point of the text's box goes at
-    /// `position`, from -1 to 1 on each axis: (-1, 1) puts its top left corner there.
-    pub fn draw_text(
-        &self,
-        text: &CStr,
-        position: Real2,
-        align: Real2,
-        color: [f32; 4],
-        font: Font,
-        params: &TextParams,
-    ) {
-        let font = self.font(font);
-        // SAFETY: The game's `draw_text`, called on the render thread (in a stage where the game
-        // draws text itself), with the NUL-terminated text, and our copies of the font and
-        // parameters.
-        unsafe {
-            let draw: DrawText = std::mem::transmute(self.game.bindings.draw_text);
-            draw(
-                text.as_ptr(),
-                position.x,
-                position.y,
-                &color,
-                align,
-                &font,
-                params,
-            );
-        }
-    }
-
-    fn font(&self, font: Font) -> FontInfo {
-        let offset = self.game.bindings.rc_fonts[font as usize];
-        // SAFETY: One of the `font_info`s of the UI render context, whose size `bindings` checked.
-        unsafe { read(self.ui_render_context + offset) }
     }
 }
 

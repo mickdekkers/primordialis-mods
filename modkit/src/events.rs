@@ -1,7 +1,8 @@
 //! Turns the game's rendering into feature calls, by hooking two game functions:
 //!
-//! - `render_game(world_rc, ui_rc, input, ...)`: renders a frame. Gives the frame's world and UI
-//!   render contexts (their cameras and fonts) and its input (the mouse), and marks its end.
+//! - `render_game(world_rc, ui_rc, input, ..., dt, ...)`: renders a frame. Gives the frame's world and
+//!   UI render contexts (their cameras and fonts), its input (the mouse) and its time step, and marks
+//!   its end.
 //! - `begin_trace_stage(name)`: called at the start of every rendering stage (it only records timings
 //!   when the profiler is on). Anchoring on stage names instead of code addresses survives game
 //!   updates. A stage ends when the next begins, or when the frame ends.
@@ -45,6 +46,8 @@ struct FrameState {
     /// Its UI `render_context*` and `user_input*`.
     ui_render_context: usize,
     input: usize,
+    /// Its `dt`: the time since the last frame, in seconds.
+    dt: f32,
     /// The name of the current stage, or 0.
     stage: usize,
 }
@@ -54,6 +57,7 @@ impl FrameState {
         render_context: 0,
         ui_render_context: 0,
         input: 0,
+        dt: 0.0,
         stage: 0,
     };
 }
@@ -156,6 +160,7 @@ extern "C" fn render_game(
             render_context: world_rc as usize,
             ui_render_context: ui_rc as usize,
             input: input as usize,
+            dt,
             stage: 0,
         }
     };
@@ -215,6 +220,7 @@ fn dispatch(state: FrameState, mut event: impl FnMut(&mut dyn Feature, &Frame)) 
             state.render_context,
             state.ui_render_context,
             state.input,
+            state.dt,
         )
     };
     features.each(

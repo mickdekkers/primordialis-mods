@@ -10,7 +10,8 @@ use std::mem::{offset_of, size_of};
 
 use super::symbols::Symbols;
 use super::types::{
-    CircleRenderInfo, FontInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TextParams, Wall,
+    CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TooltipState,
+    TranslationInfo, Wall,
 };
 use crate::{Result, log};
 
@@ -25,15 +26,11 @@ pub struct Bindings {
     pub draw_lines: usize,
     /// `wall_t wall_map(map_t*, real_2, bool)`: the wall distance field the game's physics uses.
     pub wall_map: usize,
-    /// UI drawing: `draw_text`, `get_text_size(char*, font_info, text_params)`,
-    /// `draw_rounded_rectangle_outlined` and `draw_line(render_context*, real_2, real_2, float,
-    /// real_4*)`. The last three share their names with overloads.
-    pub draw_text: usize,
-    pub get_text_size: usize,
-    pub draw_rounded_rectangle_outlined: usize,
+    /// `draw_line(render_context*, real_2, real_2, float, real_4*)`, which shares its name with
+    /// overloads.
     pub draw_line: usize,
-    /// `char* get_translation(char* key)`: a text in the player's language.
-    pub get_translation: usize,
+    /// `do_tooltip(render_context*, tooltip_t*, ...)`: draws the tooltip of a cell, mutation or body.
+    pub do_tooltip: usize,
 
     /// The global `world w`.
     pub world: usize,
@@ -48,6 +45,21 @@ pub struct Bindings {
     pub map_range: MapRange,
     /// `w.frame_number` (`int`), which counts simulation steps.
     pub frame_number: usize,
+    /// The `w.map_mode` bitfield: byte offset of its `u32` storage and bit position.
+    pub map_mode: (usize, u32),
+    /// `w.tooltip` (`tooltip_t`) and `w.tooltip_active` (`bool`): the tooltip of the pickup under the
+    /// mouse in the world, as offsets in `world`.
+    pub tooltip: usize,
+    pub tooltip_active: usize,
+    /// `w.em.cell_items` (`cell_item*`), `w.em.n_cell_items` (`int`) and `w.em.max_genome_size`
+    /// (`float`): the player's cells and genome size, as offsets in `world`.
+    pub cell_items: usize,
+    pub n_cell_items: usize,
+    pub max_genome_size: usize,
+
+    pub cell_item_size: usize,
+    pub cell_item_type: usize,
+    pub cell_item_material_index: usize,
 
     pub pickup_size: usize,
     pub pickup_material_index: usize,
@@ -63,8 +75,7 @@ pub struct Bindings {
     pub material_size: usize,
     pub material_base_color: usize,
     pub material_uv: usize,
-    /// `material_t.name` (`char*`): the cell's name in the player's language.
-    pub material_name: usize,
+    pub material_genome_size: usize,
 
     /// `float map_icon_alpha`, a static in `render_game`: 0 when the map is closed, fading to 1 while
     /// it is open.
@@ -73,8 +84,6 @@ pub struct Bindings {
     /// `render_context.camera` (world-to-clip matrix) and `render_context.camera_pos`.
     pub rc_camera: usize,
     pub rc_camera_pos: usize,
-    /// `render_context.small_font`, `default_font`, `medium_font` and `big_font` (`font_info`).
-    pub rc_fonts: [usize; 4],
 
     /// `user_input.mouse` (`real_2`), in UI units.
     pub input_mouse: usize,
@@ -97,6 +106,8 @@ impl Bindings {
         let int2 = symbols.layout("int_2")?;
         let pickup = symbols.layout("cell_pickup")?;
         let material = symbols.layout("material_t")?;
+        let edit_menu = symbols.layout("edit_menu")?;
+        let cell_item = symbols.layout("cell_item")?;
         let render_context = symbols.layout("render_context")?;
         let input = symbols.layout("user_input")?;
 
@@ -116,6 +127,7 @@ impl Bindings {
         )?;
 
         let map_offset = world.offset("map")?;
+        let em = world.offset("em")?;
         let range = map_offset + map.offset("map_range")?;
         let (lower, upper) = (bounds.offset("l")?, bounds.offset("u")?);
 
@@ -126,12 +138,8 @@ impl Bindings {
             draw_circles: symbols.address("draw_circles")?,
             draw_lines: symbols.address("draw_lines")?,
             wall_map: symbols.address("wall_map")?,
-            draw_text: symbols.function("draw_text", 7)?,
-            get_text_size: symbols.function("get_text_size", 3)?,
-            draw_rounded_rectangle_outlined: symbols
-                .function("draw_rounded_rectangle_outlined", 7)?,
             draw_line: symbols.function("draw_line", 5)?,
-            get_translation: symbols.function("get_translation", 1)?,
+            do_tooltip: symbols.function("do_tooltip", 9)?,
 
             world: symbols.address("w")?,
             cell_pickups: world.offset("cell_pickups")?,
@@ -145,6 +153,16 @@ impl Bindings {
                 upper_y: range + upper + 4,
             },
             frame_number: world.offset("frame_number")?,
+            map_mode: world.flag("map_mode")?,
+            tooltip: world.offset("tooltip")?,
+            tooltip_active: world.offset("tooltip_active")?,
+            cell_items: em + edit_menu.offset("cell_items")?,
+            n_cell_items: em + edit_menu.offset("n_cell_items")?,
+            max_genome_size: em + edit_menu.offset("max_genome_size")?,
+
+            cell_item_size: cell_item.size,
+            cell_item_type: cell_item.offset("type")?,
+            cell_item_material_index: cell_item.offset("material_index")?,
 
             pickup_size: pickup.size,
             pickup_material_index: pickup.offset("material_index")?,
@@ -158,18 +176,12 @@ impl Bindings {
             material_size: material.size,
             material_base_color: material.offset("base_color")?,
             material_uv: material.offset("uv")?,
-            material_name: material.offset("name")?,
+            material_genome_size: material.offset("genome_size")?,
 
             map_icon_alpha,
 
             rc_camera: render_context.offset("camera")?,
             rc_camera_pos: render_context.offset("camera_pos")?,
-            rc_fonts: [
-                render_context.offset("small_font")?,
-                render_context.offset("default_font")?,
-                render_context.offset("medium_font")?,
-                render_context.offset("big_font")?,
-            ],
 
             input_mouse: input.offset("mouse")?,
         };
@@ -206,24 +218,27 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && wall.offset("dist")? == offset_of!(Wall, dist)
         && wall.offset("gradient")? == offset_of!(Wall, gradient);
     expect(matches, "wall_t layout changed")?;
-    let text = symbols.layout("text_params")?;
-    let matches = text.size == size_of::<TextParams>()
-        && text.offset("scale")? == offset_of!(TextParams, scale)
-        && text.offset("orientation")? == offset_of!(TextParams, orientation)
-        && text.offset("shadow")? == offset_of!(TextParams, shadow)
-        && text.offset("outline")? == offset_of!(TextParams, outline)
-        && text.offset("shadow_color")? == offset_of!(TextParams, shadow_color)
-        && text.offset("outline_color")? == offset_of!(TextParams, outline_color)
-        && text.offset("clip_size")? == offset_of!(TextParams, clip_size)
-        && text.offset("wrap_width")? == offset_of!(TextParams, wrap_width)
-        && text.offset("wrap_indent")? == offset_of!(TextParams, wrap_indent)
-        && text.offset("fixed_width")? == offset_of!(TextParams, fixed_width);
-    expect(matches, "text_params layout changed")?;
-    // Only copied as a whole, so only its size matters.
-    expect(
-        symbols.layout("font_info")?.size == size_of::<FontInfo>(),
-        "font_info size changed",
-    )?;
+    let tooltip = symbols.layout("tooltip_t")?;
+    let matches = tooltip.size == size_of::<TooltipState>()
+        && tooltip.offset("box_size")? == offset_of!(TooltipState, box_size)
+        && tooltip.offset("pos")? == offset_of!(TooltipState, pos)
+        && tooltip.offset("alpha")? == offset_of!(TooltipState, alpha)
+        && tooltip.offset("last_hovered_index")? == offset_of!(TooltipState, last_hovered_index)
+        && tooltip.offset("last_hovered_type")? == offset_of!(TooltipState, last_hovered_type)
+        && tooltip.offset("last_hovered_imbue")? == offset_of!(TooltipState, last_hovered_imbue)
+        && tooltip.offset("last_hovered_mutation_pos")?
+            == offset_of!(TooltipState, last_hovered_mutation_pos)
+        && tooltip.flag("is_combo")? == (offset_of!(TooltipState, flags), 0)
+        && tooltip.offset("consumable_instructions")?
+            == offset_of!(TooltipState, consumable_instructions);
+    expect(matches, "tooltip_t layout changed")?;
+    let translation = symbols.layout("translation_info")?;
+    let matches = translation.size == size_of::<TranslationInfo>()
+        && translation.offset("mutagen_material_index")?
+            == offset_of!(TranslationInfo, mutagen_material_index)
+        && translation.offset("combine_material_index")?
+            == offset_of!(TranslationInfo, combine_material_index);
+    expect(matches, "translation_info layout changed")?;
     expect(
         symbols.layout("real_2")?.size == size_of::<Real2>(),
         "real_2 size changed",

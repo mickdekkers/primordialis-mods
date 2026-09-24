@@ -86,33 +86,33 @@ impl LineRenderInfo {
     }
 }
 
-/// The game's `text_params`: how `Frame::draw_text` lays out and styles text. All zero is the plain
-/// default: unscaled, no shadow or outline, no clipping or wrapping.
+/// The game's `tooltip_t`: a tooltip that its `do_tooltip` draws and animates from frame to frame.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
-pub struct TextParams {
-    /// Size multiplier; 0 means 1.
-    pub scale: f32,
-    pub orientation: Real2,
-    /// Drop shadow offset, in UI units.
-    pub shadow: f32,
-    /// Outline width, in UI units.
-    pub outline: f32,
-    /// RGBA.
-    pub shadow_color: [f32; 4],
-    /// RGBA.
-    pub outline_color: [f32; 4],
-    pub clip_size: Real2,
-    pub wrap_width: f32,
-    pub wrap_indent: f32,
-    pub fixed_width: f32,
+pub(crate) struct TooltipState {
+    /// The box's size, easing towards the size of its contents.
+    pub box_size: Real2,
+    /// The box's position, in UI units.
+    pub pos: Real2,
+    /// Fades in from 0 to 1 while the tooltip is shown, and back out.
+    pub alpha: f32,
+    /// What the tooltip is about: for cells (type 0), a material index.
+    pub last_hovered_index: i32,
+    pub last_hovered_type: i32,
+    pub last_hovered_imbue: i32,
+    /// Where the tooltip points, in UI units.
+    pub last_hovered_mutation_pos: Real2,
+    /// Bit 0 is `is_combo`: the cell is a combo pickup.
+    pub flags: u32,
+    pub consumable_instructions: u32,
 }
 
-/// The game's `font_info`, only ever copied from a render context and handed back to the game.
-#[repr(C, align(8))]
-#[derive(Clone, Copy)]
-pub(crate) struct FontInfo {
-    bytes: [u8; 0xB8],
+/// The game's `translation_info`, which `do_tooltip` takes by value.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TranslationInfo {
+    pub mutagen_material_index: i32,
+    pub combine_material_index: i32,
 }
 
 /// The game's `wall_t`: a sample of the wall distance field.

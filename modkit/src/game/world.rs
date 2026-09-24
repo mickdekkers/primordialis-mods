@@ -1,6 +1,6 @@
 //! The world: cell pickups, their materials, and the map.
 
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::c_void;
 
 use super::types::{Real2, Wall};
 use super::{Game, read, write};
@@ -107,17 +107,13 @@ impl<'a> Pickup<'a> {
 
     /// The cell this pickup gives, if its material index is valid.
     pub fn material(&self) -> Option<Material<'a>> {
-        let bindings = self.game.bindings;
-        // SAFETY: `cell_pickup.material_index`, and the globals `materials_list` and `n_materials`.
-        unsafe {
-            let index = read::<i32>(self.address + bindings.pickup_material_index);
-            let materials = read::<usize>(bindings.materials_list);
-            let count = read::<i32>(bindings.n_materials);
-            (materials != 0 && (0..count).contains(&index)).then(|| Material {
-                game: self.game,
-                address: materials + index as usize * bindings.material_size,
-            })
-        }
+        Material::get(self.game, self.material_index())
+    }
+
+    /// Index of the cell this pickup gives in the game's materials, which may be invalid.
+    pub(super) fn material_index(&self) -> i32 {
+        // SAFETY: `cell_pickup.material_index`, an int.
+        unsafe { read(self.address + self.game.bindings.pickup_material_index) }
     }
 
     /// Whether this is part of a combo cell: those are drawn in shifting colors, with a ring of
@@ -137,14 +133,24 @@ pub struct Material<'a> {
 }
 
 impl<'a> Material<'a> {
-    /// The cell's name, in the player's language (what the game's own tooltips show).
-    pub fn name(&self) -> Option<&'a CStr> {
-        // SAFETY: `material_t.name`, a `char*` to a NUL-terminated string the game keeps for as long
-        // as the material exists, or null.
+    /// The material at `index` in the game's `materials_list`, if there is one.
+    pub(super) fn get(game: Game<'a>, index: i32) -> Option<Self> {
+        let bindings = game.bindings;
+        // SAFETY: The globals `materials_list` and `n_materials`.
         unsafe {
-            let name = read::<*const c_char>(self.address + self.game.bindings.material_name);
-            (!name.is_null()).then(|| CStr::from_ptr(name))
+            let materials = read::<usize>(bindings.materials_list);
+            let count = read::<i32>(bindings.n_materials);
+            (materials != 0 && (0..count).contains(&index)).then(|| Material {
+                game,
+                address: materials + index as usize * bindings.material_size,
+            })
         }
+    }
+
+    /// How much of a body's genome size the cell takes up.
+    pub fn genome_size(&self) -> f32 {
+        // SAFETY: `material_t.genome_size`, a float.
+        unsafe { read(self.address + self.game.bindings.material_genome_size) }
     }
 
     /// RGBA.

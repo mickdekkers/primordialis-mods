@@ -4,8 +4,10 @@
 //! world, which only exists near the player.
 //!
 //! Pointing at icons with the mouse spreads out the ones that overlap onto a grid (other icons in the
-//! way make room on it), and shows a tooltip naming the cell under the cursor. Meanwhile, the pickups
-//! on the grid aren't drawn in the world (if they're near enough to be), so they only show up once.
+//! way make room on it), and shows the game's own tooltip for the cell under the cursor, the one it
+//! shows for pickups in the world. Meanwhile, the pickups on the grid aren't drawn in the world (if
+//! they're near enough to be), so they only show up once. For the same reason, the game's tooltip for
+//! the pickup under the mouse in the world isn't shown while the map is open.
 
 use modkit::Feature;
 use modkit::game::{
@@ -17,7 +19,7 @@ use modkit::settings::{Setting, Toggle};
 use crate::grid_pickups::GridPickups;
 use crate::settle::SettledPositions;
 use crate::spread::{self, Spread};
-use crate::tooltip::{Line, Tooltip};
+use crate::tooltip::Tooltip;
 
 static FIX_ICON_POSITIONS: Toggle = Toggle::new(
     "fix_icon_positions",
@@ -36,7 +38,7 @@ static SPREAD_CLUSTERS: Toggle = Toggle::new(
 static SHOW_TOOLTIPS: Toggle = Toggle::new(
     "show_tooltips",
     true,
-    "Name the cell of the map icon under the mouse.",
+    "Show the cell of the map icon under the mouse in a tooltip, as the game does for pickups near you.",
 );
 
 /// Icon radius as a fraction of half the screen height, so icons keep the same on-screen size at any
@@ -91,8 +93,6 @@ const FADE_TICKS_FAR: f32 = 15.0;
 /// by the second, so icons further away stay clear.
 const SPOTLIGHT_RADIUS: f32 = 2.0;
 const SPOTLIGHT_EDGE: f32 = 10.0;
-/// The tooltip's second line, for combo pickups, is this light gray.
-const COMBO_LINE_COLOR: [f32; 3] = [0.75, 0.75, 0.75];
 
 #[derive(Default)]
 pub struct MapIcons {
@@ -116,6 +116,9 @@ pub struct MapIcons {
     grid: GridPickups,
     on_grid: (Option<PickupsId>, Vec<usize>),
     hidden: Hidden,
+    /// Whether the game's tooltip for the pickup under the mouse in the world was active, and its
+    /// opacity, while it's hidden.
+    hidden_world_tooltip: Option<(bool, f32)>,
     fades: Fades,
     tooltip: Tooltip,
     logged_first_draw: bool,
@@ -214,6 +217,8 @@ impl Feature for MapIcons {
     fn stage_begin(&mut self, frame: &Frame, stage: Stage) {
         if stage == Stage::CELL_PICKUPS {
             self.hide_in_world(frame.game());
+        } else if stage == Stage::RACING_OVERLAY {
+            self.hide_world_tooltip(frame.game());
         } else if stage == Stage::MENUS {
             self.draw(frame);
         }
@@ -222,11 +227,14 @@ impl Feature for MapIcons {
     fn stage_end(&mut self, frame: &Frame, stage: Stage) {
         if stage == Stage::CELL_PICKUPS {
             self.show_in_world(frame.game());
+        } else if stage == Stage::RACING_OVERLAY {
+            self.show_world_tooltip(frame.game());
         }
     }
 
     fn revert(&mut self, game: &Game) {
         self.show_in_world(game);
+        self.show_world_tooltip(game);
     }
 }
 
@@ -239,11 +247,12 @@ impl MapIcons {
     }
 
     /// Makes the pickups on the grid transparent while the game queues the pickups near the camera
-    /// to be drawn in the world, until `show_in_world`: their icons stand in for them.
+    /// to be drawn in the world, until `show_in_world`: their icons stand in for them. Not once the map
+    /// starts closing: its icons fade out then, and the pickups should be back at once.
     fn hide_in_world(&mut self, game: &Game) {
         self.show_in_world(game);
         let pickups = game.pickups();
-        if self.on_grid.0 != Some(pickups.id()) {
+        if self.on_grid.0 != Some(pickups.id()) || !game.map_mode() {
             return;
         }
         self.hidden.pickups = Some(pickups.id());
@@ -271,6 +280,32 @@ impl MapIcons {
             }
         }
         self.hidden.alphas.clear();
+    }
+
+    /// While the map is open, keeps the game from drawing its tooltip for the pickup under the mouse
+    /// in the world (it does in this stage) until `show_world_tooltip`: it would show up on the map,
+    /// next to the one for the icon under the mouse.
+    fn hide_world_tooltip(&mut self, game: &Game) {
+        self.show_world_tooltip(game);
+        if !game.map_open() {
+            return;
+        }
+        let tooltip = game.world_tooltip();
+        self.hidden_world_tooltip = Some((tooltip.active(), tooltip.alpha()));
+        tooltip.set_active(false);
+        tooltip.set_alpha(0.0);
+    }
+
+    fn show_world_tooltip(&mut self, game: &Game) {
+        let Some((active, alpha)) = self.hidden_world_tooltip.take() else {
+            return;
+        };
+        let tooltip = game.world_tooltip();
+        // Nothing should change it in between, but if something did, leave it be.
+        if !tooltip.active() && tooltip.alpha().to_bits() == 0f32.to_bits() {
+            tooltip.set_active(active);
+            tooltip.set_alpha(alpha);
+        }
     }
 
     /// Records which pickups are on the grid, and shares it.
@@ -309,9 +344,11 @@ impl MapIcons {
         let moved_out_of_walls = self.collect(game);
 
         // Where the mouse points on the map, through the UI camera to the screen, then back through
-        // the world camera onto the ground.
-        let mouse = frame.mouse();
-        let mouse_on_map = mouse
+        // the world camera onto the ground. Nowhere while the map is closing: the grid collapses, and
+        // the tooltip fades out.
+        let mouse_on_map = frame
+            .mouse()
+            .filter(|_| game.map_mode())
             .and_then(|mouse| frame.ui_camera().project(mouse))
             .and_then(|ndc| camera.unproject(ndc));
 
@@ -461,11 +498,12 @@ impl MapIcons {
         );
         frame.draw_cell_icons(&self.icons, light);
 
-        match (hovered, mouse) {
-            (Some(icon), Some(mouse)) if SHOW_TOOLTIPS.get() => {
-                self.draw_tooltip(frame, self.visible[icon].pickup, mouse)
-            }
-            _ => self.tooltip.hide(),
+        if SHOW_TOOLTIPS.get() {
+            let pointed = hovered
+                .and_then(|icon| Some((pickups.get(self.visible[icon].pickup)?, shown[icon])));
+            self.tooltip.draw(frame, pointed);
+        } else {
+            self.tooltip.hide();
         }
     }
 
@@ -514,36 +552,6 @@ impl MapIcons {
             self.pickup_indices.push(index);
         }
         moved
-    }
-
-    /// Names the cell of pickup `index`: its material's name, as the game's tooltips show it, and for
-    /// combo pickups, the game's name for combo cells below it.
-    fn draw_tooltip(&mut self, frame: &Frame, index: usize, mouse: Real2) {
-        let game = frame.game();
-        let pickup = game.pickups().get(index);
-        let Some((pickup, name)) =
-            pickup.and_then(|pickup| Some((pickup, pickup.material()?.name()?)))
-        else {
-            self.tooltip.hide();
-            return;
-        };
-        let mut lines = vec![Line {
-            text: name,
-            color: [1.0, 1.0, 1.0],
-        }];
-        if pickup.is_combo() {
-            lines.push(Line {
-                text: game.translation(c"cell_MIXD_name"),
-                color: COMBO_LINE_COLOR,
-            });
-        }
-        self.tooltip.draw(
-            frame,
-            &lines,
-            mouse,
-            game.map_fade().clamp(0.0, 1.0),
-            game.frame_number(),
-        );
     }
 }
 
