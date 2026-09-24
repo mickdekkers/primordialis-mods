@@ -2,7 +2,7 @@
 //! stays where map generation put it, which can be inside rock. Once simulated, the physics pushes it
 //! out to the wall surface. This applies the same push-out, to show pickups where they will be.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use modkit::game::{Game, Map, Pickup, Real2};
 
@@ -16,7 +16,7 @@ const MAX_PUSH_OUT_STEPS: usize = 8;
 #[derive(Default)]
 pub struct SettledPositions {
     /// Pickup position and radius (as bits) to its settled position.
-    cache: HashMap<[u32; 3], Real2>,
+    cache: FxHashMap<[u32; 3], Real2>,
     map_open: bool,
 }
 
