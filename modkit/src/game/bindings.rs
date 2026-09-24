@@ -126,10 +126,15 @@ impl Bindings {
             "int_2 layout changed",
         )?;
 
-        let map_offset = world.offset("map")?;
-        let em = world.offset("em")?;
-        let range = map_offset + map.offset("map_range")?;
-        let (lower, upper) = (bounds.offset("l")?, bounds.offset("u")?);
+        // Every field read or written is checked for its size as well as found: a field whose type
+        // changed but kept its name would otherwise be read or overwritten along with its neighbors.
+        let map_offset = world.offset_sized("map", map.size)?;
+        let em = world.offset_sized("em", edit_menu.size)?;
+        let range = map_offset + map.offset_sized("map_range", bounds.size)?;
+        let (lower, upper) = (
+            bounds.offset_sized("l", int2.size)?,
+            bounds.offset_sized("u", int2.size)?,
+        );
 
         let bindings = Bindings {
             render_game: symbols.address("render_game")?,
@@ -142,48 +147,48 @@ impl Bindings {
             do_tooltip: symbols.function("do_tooltip", 9)?,
 
             world: symbols.address("w")?,
-            cell_pickups: world.offset("cell_pickups")?,
-            n_cell_pickups: world.offset("n_cell_pickups")?,
+            cell_pickups: world.offset_of::<usize>("cell_pickups")?,
+            n_cell_pickups: world.offset_of::<i32>("n_cell_pickups")?,
             map: map_offset,
-            explored: map_offset + map.offset("explored")?,
+            explored: map_offset + map.offset_of::<usize>("explored")?,
             map_range: MapRange {
                 lower_x: range + lower,
                 lower_y: range + lower + 4,
                 upper_x: range + upper,
                 upper_y: range + upper + 4,
             },
-            frame_number: world.offset("frame_number")?,
+            frame_number: world.offset_of::<i32>("frame_number")?,
             map_mode: world.flag("map_mode")?,
-            tooltip: world.offset("tooltip")?,
-            tooltip_active: world.offset("tooltip_active")?,
-            cell_items: em + edit_menu.offset("cell_items")?,
-            n_cell_items: em + edit_menu.offset("n_cell_items")?,
-            max_genome_size: em + edit_menu.offset("max_genome_size")?,
+            tooltip: world.offset_of::<TooltipState>("tooltip")?,
+            tooltip_active: world.offset_of::<bool>("tooltip_active")?,
+            cell_items: em + edit_menu.offset_of::<usize>("cell_items")?,
+            n_cell_items: em + edit_menu.offset_of::<i32>("n_cell_items")?,
+            max_genome_size: em + edit_menu.offset_of::<f32>("max_genome_size")?,
 
             cell_item_size: cell_item.size,
-            cell_item_type: cell_item.offset("type")?,
-            cell_item_material_index: cell_item.offset("material_index")?,
+            cell_item_type: cell_item.offset_of::<i32>("type")?,
+            cell_item_material_index: cell_item.offset_of::<i32>("material_index")?,
 
             pickup_size: pickup.size,
-            pickup_material_index: pickup.offset("material_index")?,
-            pickup_x: pickup.offset("x")?,
-            pickup_r: pickup.offset("r")?,
-            pickup_alpha: pickup.offset("alpha")?,
+            pickup_material_index: pickup.offset_of::<i32>("material_index")?,
+            pickup_x: pickup.offset_of::<Real2>("x")?,
+            pickup_r: pickup.offset_of::<f32>("r")?,
+            pickup_alpha: pickup.offset_of::<f32>("alpha")?,
             pickup_is_combo: pickup.flag("is_combo")?,
 
             materials_list: symbols.address("materials_list")?,
             n_materials: symbols.address("n_materials")?,
             material_size: material.size,
-            material_base_color: material.offset("base_color")?,
-            material_uv: material.offset("uv")?,
-            material_genome_size: material.offset("genome_size")?,
+            material_base_color: material.offset_of::<[f32; 4]>("base_color")?,
+            material_uv: material.offset_of::<[f32; 2]>("uv")?,
+            material_genome_size: material.offset_of::<f32>("genome_size")?,
 
             map_icon_alpha,
 
-            rc_camera: render_context.offset("camera")?,
-            rc_camera_pos: render_context.offset("camera_pos")?,
+            rc_camera: render_context.offset_of::<Real4x4>("camera")?,
+            rc_camera_pos: render_context.offset_of::<[f32; 3]>("camera_pos")?,
 
-            input_mouse: input.offset("mouse")?,
+            input_mouse: input.offset_of::<Real2>("mouse")?,
         };
         log::info(&format!("resolved game bindings: {bindings:x?}"));
         Ok(bindings)
@@ -308,6 +313,11 @@ mod tests {
             let bindings = Bindings::resolve(&symbols).unwrap();
             println!("{exe}: base {base:#x}\n{bindings:#x?}");
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
+            let pickup = symbols.layout("cell_pickup").unwrap();
+            assert!(
+                pickup.offset_of::<f64>("alpha").is_err(),
+                "a field read as the wrong size is refused"
+            );
         }
     }
 }

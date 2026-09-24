@@ -69,6 +69,8 @@ struct Found {
 
 pub struct Field {
     pub offset: usize,
+    /// The size of the field's type, in bytes.
+    pub size: usize,
     /// For bitfields: the position of the lowest bit, and the number of bits.
     pub bits: Option<(u32, u64)>,
 }
@@ -86,6 +88,25 @@ impl TypeLayout {
             return Err(format!("{}.{field} is unexpectedly a bitfield", self.name));
         }
         Ok(info.offset)
+    }
+
+    /// Byte offset of a field that is `size` bytes large. Fails if its size changed, which means its
+    /// type did: reading or writing it as before would reach into the fields next to it.
+    pub fn offset_sized(&self, field: &str, size: usize) -> Result<usize> {
+        let offset = self.offset(field)?;
+        let actual = self.field(field)?.size;
+        if actual != size {
+            return Err(format!(
+                "{}.{field} is {actual} bytes, expected {size}",
+                self.name
+            ));
+        }
+        Ok(offset)
+    }
+
+    /// Byte offset of a field read or written as a `T`, checking that it's as large as one.
+    pub fn offset_of<T>(&self, field: &str) -> Result<usize> {
+        self.offset_sized(field, size_of::<T>())
     }
 
     /// Byte offset and bit position of a one-bit bitfield.
@@ -542,10 +563,17 @@ impl Symbols {
                 Some(()) => Some((position, self.type_length(child)? as u64)),
                 None => None,
             };
+            let mut field_type = 0u32;
+            let size = match self.type_info(child, TI_GET_TYPEID, &mut field_type) {
+                Some(()) => self.type_length(field_type)?,
+                // Unknown: no size check can pass.
+                None => 0,
+            };
             fields.insert(
                 name,
                 Field {
                     offset: offset as usize,
+                    size,
                     bits,
                 },
             );
