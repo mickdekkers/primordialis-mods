@@ -16,7 +16,8 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
 - **`primordialis_qol`** (`src/`): the mod itself, which is only features implementing
   `modkit::Feature`. Feature code should stay free of `unsafe`. If a feature needs something new from
   the game, add a binding in `modkit/src/game/`: resolve it by name in `bindings.rs`, then expose it
-  through a safe accessor.
+  through a safe accessor. A binding no feature uses yet is `Optional`: if a game update breaks it,
+  only a feature that uses it is turned off, not the whole mod.
 - **`primordialis_qol_hot_reload`** (`hot_reload/`): a development-only host DLL that swaps in new
   mod builds while the game runs, plus `primordialis_qol_inject.exe`, which loads the host into a game
   that is already running.
@@ -28,6 +29,9 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
   game's `pdbs.zip`, which contains full private PDBs.
 - **Mirrored types:** every `#[repr(C)]` mirror of a game type must be checked against the PDB in
   `bindings.rs`.
+- **Field sizes:** every field read or written is resolved with the size it's used as
+  (`TypeLayout::offset_of::<T>`), so a field whose type changed turns the mod off instead of being
+  read or overwritten along with its neighbors.
 - **Values taken from game code:** some values are constants compiled into the game's code rather
   than symbols, such as the combo colour cycle. They are copied by hand and must be documented as
   such.
@@ -35,8 +39,8 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
   - `render_game(world_rc, ui_rc, input, ...)`: frames, the world render context (camera), the UI
     render context (UI camera, fonts), and the input. The mouse is in UI units: the screen height
     spans -1 to 1, y up.
-  - `begin_trace_stage(name)`: stage boundaries. The `racing_overlay` stage (Echolocation markers)
-    comes right before `menus`. When `menus` begins, the UI framebuffer is bound and the map markers
+  - `begin_trace_stage(name)`: stage boundaries. The `racing_overlay` stage (Echolocation markers,
+    and the game's tooltip for the pickup under the mouse in the world) comes right before `menus`. When `menus` begins, the UI framebuffer is bound and the map markers
     have just been drawn: that's where the mod draws.
   - Those are the only two stages that read the pickups one by one: `racing_overlay` draws a marker
     for every pickup within range of the camera, and `cell pickups` queues the pickups near the
@@ -44,15 +48,17 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
     of these stages only, and change them back when it ends (and in `revert`).
 - **Features sharing state:** features are `Send` and separate, so shared state lives in an
   `Arc<Mutex<_>>` created in `entry!`'s `features` (see `src/grid_pickups.rs`). It's only locked in
-  stage callbacks, with `try_lock`, and never in `revert`.
+  stage callbacks, with `try_lock`, and never in `revert` (which can use atomics, like
+  `GridPickups::withdraw`). The map icons set the grid in `menus`, so the features that read it in
+  `cell pickups` and `racing_overlay` see the previous frame's.
 - **Simulation clock:** `w.frame_number` counts simulation steps at a fixed 120 per second, so it's
   frame-rate independent. Use it for animation timing.
 - **Pickups:**
   - The game only simulates pickups near the camera; far away they can sit inside rock.
   - `is_combo` pickups only come from map generation. The sandbox combo tool can't produce one.
     Placing another cell type next to one merges them into a combo cell ("Combo Cell").
-- **Overloads:** some game functions are C++ overloads sharing a name (`get_translation`,
-  `get_text_size`, `draw_line`). Resolve those with `Symbols::function(name, params)`.
+- **Overloads:** some game functions are C++ overloads sharing a name (such as `draw_line`). Resolve
+  those with `Symbols::function(name, params)`.
 
 ## Invariants
 
@@ -60,8 +66,8 @@ These keep hooking and unloading safe while the game runs:
 
 - **No locks or process-heap allocation while threads are paused.** Code that runs while the game's
   threads are paused (`freeze::while_paused` callbacks, `Feature::revert` during unload) must not
-  take locks a game thread could hold. It also must not allocate from anything but the mod's private
-  heap, which is the global allocator installed by `entry!`.
+  take locks a game thread could hold, and must not log. It also must not allocate from anything but
+  the mod's private heap, which is the global allocator installed by `entry!`.
 - **Detours count themselves first.** Every detour starts with `hook::InFlight::enter()`. Unhooking
   waits for zero in-flight calls, and for no paused thread to be inside the mod, its trampolines, or
   the patched prologues.
@@ -87,6 +93,8 @@ These keep hooking and unloading safe while the game runs:
 - `cargo clippy --workspace --all-targets --release` should be clean.
 - Run `cargo fmt --all` before every commit. It uses rustfmt's defaults (there is no rustfmt
   config), and `cargo fmt --all --check` must be clean.
+- The Rust sources use LF line endings, and `README.md` uses CRLF. Scripted edits must keep each
+  file's line endings (in Python on Windows, open files with `newline=''`).
 - On this machine the game is installed at `G:\SteamLibrary\steamapps\common\Primordialis`. It comes
   in AVX and SSE3 builds (`primordialis_avx.exe`, `primordialis_sse3.exe`).
 
