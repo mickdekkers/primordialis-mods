@@ -16,8 +16,16 @@ use modkit::game::{
 use modkit::log;
 use modkit::settings::{Setting, Toggle};
 
+use crate::combo::{HALO_ALPHA, Halo, combo_color};
+use crate::fades::{
+    FADE_TICKS_FAR, FADE_TICKS_NEAR, Fades, SPOTLIGHT_EDGE, SPOTLIGHT_RADIUS, UNFOCUSED_ALPHA,
+};
 use crate::grid_pickups::GridPickups;
-use crate::math::{self, TickClock};
+use crate::leaders::{
+    LEADER_ALPHA, LEADER_DOT_RADIUS, LEADER_WIDTH, POINTED_LEADER_ALPHA, POINTED_LEADER_SCALE,
+    dashed_line,
+};
+use crate::math;
 use crate::settle::SettledPositions;
 use crate::spread::{self, Spread};
 use crate::tooltip::Tooltip;
@@ -50,52 +58,8 @@ const ICON_SCREEN_RADIUS: f32 = 0.0385;
 const EXPLORED_MIN: f32 = 0.3;
 const EXPLORED_FULL: f32 = 0.6;
 
-/// Combo pickups don't use their material's color: the game cycles them through a dim rainbow,
-/// `COMBO_BASE + COMBO_AMPLITUDE * cos(frame_number * COMBO_SPEED + phase)` for red, green and blue,
-/// with green and blue phase-shifted by 2/3 and 1/3 of a cycle. These are constants in
-/// `render_game`'s code (not symbols), taken from the current build.
-const COMBO_BASE: f32 = 0.35;
-const COMBO_AMPLITUDE: f32 = 0.05;
-/// Radians per `frame_number` tick. Angles from the frame number are worked out in `f64`: an `f32`
-/// only holds tick counts exactly up to 2^24 (39 hours of play), after which they'd move in steps.
-const COMBO_SPEED: f64 = 0.02;
-
-/// The ring of dots around combo pickups, in multiples of the icon radius.
-const HALO_RADIUS: f32 = 1.7;
-const HALO_DOT_RADIUS: f32 = 0.14;
-const HALO_DOTS: usize = 16;
-/// Clockwise ring rotation, in radians per `frame_number` tick (120 per second): ~20 s per turn.
-const HALO_SPIN: f64 = 0.00265;
-/// Dot opacity relative to the icon's.
-const HALO_ALPHA: f32 = 0.9;
-
 /// The icon under the mouse is drawn this much larger.
 const HOVER_SCALE: f32 = 1.15;
-/// Spread out icons are connected to where their pickups are by a dashed line this wide (dashes and
-/// the gaps between them this long), ending in a dot this large, in icon radii, and this opaque
-/// relative to the icon.
-const LEADER_WIDTH: f32 = 0.15;
-const LEADER_DOT_RADIUS: f32 = 0.2;
-const DASH_LENGTH: f32 = 0.45;
-const DASH_GAP: f32 = 0.35;
-const LEADER_ALPHA: f32 = 0.6;
-/// The spread out icon under the mouse gets a solid line this much wider, a dot this much larger,
-/// and this opaque.
-const POINTED_LEADER_SCALE: f32 = 1.5;
-const POINTED_LEADER_ALPHA: f32 = 1.0;
-/// While the mouse points at an icon, the other icons around the mouse (and their lines and dots on
-/// the grid) fade to this opacity, and back once it doesn't.
-const UNFOCUSED_ALPHA: f32 = 0.5;
-/// Icons ease towards the opacity they should have with a time constant, in `frame_number` ticks (120
-/// per second), of the first under the mouse (25 ms), rising with the distance from it to the second
-/// at the spotlight's edge and beyond (125 ms, so ~95% of the way there in 375 ms): what the mouse
-/// points at responds at once, and the icons around it follow smoothly.
-const FADE_TICKS_NEAR: f32 = 3.0;
-const FADE_TICKS_FAR: f32 = 15.0;
-/// The icons faded are those within this many icon radii of the mouse, easing back to full opacity
-/// by the second, so icons further away stay clear.
-const SPOTLIGHT_RADIUS: f32 = 2.0;
-const SPOTLIGHT_EDGE: f32 = 10.0;
 
 #[derive(Default)]
 pub struct MapIcons {
@@ -135,58 +99,6 @@ enum Layer {
     Rest,
     Grid,
     Hovered,
-}
-
-/// How faded each icon is. Every icon eases on its own, so the one the mouse leaves doesn't jump,
-/// whether to the next icon (it fades out as that one fades in) or off them all (the rest fade back in
-/// to it).
-#[derive(Default)]
-struct Fades {
-    /// The pickup array `alphas` and `targets` are indexed like.
-    pickups: Option<PickupsId>,
-    /// Opacity of each pickup's icon, from `UNFOCUSED_ALPHA` to 1.
-    alphas: Vec<f32>,
-    /// The opacity each is easing towards this frame, and its time constant in ticks.
-    targets: Vec<(f32, f32)>,
-    clock: TickClock,
-}
-
-impl Fades {
-    /// Starts a frame in which every pickup's icon eases slowly towards full opacity, unless
-    /// `set_target` says otherwise before `ease`.
-    fn begin(&mut self, pickups: PickupsId, len: usize) {
-        if self.pickups != Some(pickups) {
-            self.pickups = Some(pickups);
-            self.alphas.clear();
-            self.alphas.resize(len, 1.0);
-        }
-        self.targets.clear();
-        self.targets.resize(len, (1.0, FADE_TICKS_FAR));
-    }
-
-    fn set_target(&mut self, pickup: usize, alpha: f32, ticks: f32) {
-        if let Some(target) = self.targets.get_mut(pickup) {
-            *target = (alpha, ticks);
-        }
-    }
-
-    /// Moves every icon's opacity towards its target, exponentially: the same share of the way each
-    /// tick, so it slows as it arrives, and a target that keeps moving (as the mouse does) is
-    /// followed smoothly.
-    fn ease(&mut self, frame_number: i32) {
-        let ticks = self.clock.advance(frame_number, 60);
-        for (alpha, &(target, time_constant)) in self.alphas.iter_mut().zip(&self.targets) {
-            *alpha += (target - *alpha) * (1.0 - (-ticks / time_constant).exp());
-        }
-    }
-
-    fn get(&self, pickup: usize) -> f32 {
-        self.alphas.get(pickup).copied().unwrap_or(1.0)
-    }
-
-    fn clear(&mut self) {
-        *self = Fades::default();
-    }
 }
 
 /// Pickups on the grid hidden in the world, to be shown again.
@@ -566,243 +478,5 @@ impl MapIcons {
             self.pickup_indices.push(index);
         }
         moved
-    }
-}
-
-/// The ring of rainbow dots drawn around combo pickups for the current frame.
-struct Halo {
-    /// Dot offsets from the pickup's center, and their colors.
-    dots: [(Real2, [f32; 3]); HALO_DOTS],
-    dot_radius: f32,
-}
-
-impl Halo {
-    fn new(frame_number: i32, icon_radius: f32) -> Self {
-        use std::f32::consts::TAU;
-        let spin = (f64::from(frame_number) * HALO_SPIN % std::f64::consts::TAU) as f32;
-        let dots = std::array::from_fn(|i| {
-            let along = i as f32 / HALO_DOTS as f32;
-            // World y points up on screen, so decreasing angles turn clockwise.
-            let angle = along * TAU - spin;
-            let distance = HALO_RADIUS * icon_radius;
-            (
-                Real2::new(angle.cos() * distance, angle.sin() * distance),
-                rainbow(along),
-            )
-        });
-        Halo {
-            dots,
-            dot_radius: HALO_DOT_RADIUS * icon_radius,
-        }
-    }
-
-    fn add(&self, out: &mut Vec<CircleRenderInfo>, center: Real2, alpha: f32) {
-        out.extend(
-            self.dots
-                .iter()
-                .map(|&(offset, [r, g, b])| CircleRenderInfo {
-                    x: [center.x + offset.x, center.y + offset.y, 0.0],
-                    r: self.dot_radius,
-                    color: [r, g, b, alpha],
-                }),
-        );
-    }
-}
-
-/// Adds the dashes of a dashed line from `from` to `to` to `lines`, for an icon `radius` large,
-/// starting with a dash at `from`.
-fn dashed_line(
-    lines: &mut Vec<LineRenderInfo>,
-    from: Real2,
-    to: Real2,
-    radius: f32,
-    color: [f32; 4],
-) {
-    let length = from.distance(to);
-    let width = LEADER_WIDTH * radius;
-    let period = (DASH_LENGTH + DASH_GAP) * radius;
-    if !(length > 0.0 && period > 0.0) {
-        return;
-    }
-    // Lines have round caps sticking out half their width at both ends, which count towards the
-    // dash length.
-    let dash = (DASH_LENGTH * radius - width).max(0.0);
-    let dashes = ((length / period).ceil() as usize).min(256);
-    for k in 0..dashes {
-        let start = k as f32 * period;
-        let end = (start + dash).min(length);
-        lines.push(LineRenderInfo::new(
-            from.lerp(to, start / length),
-            from.lerp(to, end / length),
-            width,
-            color,
-        ));
-    }
-}
-
-/// A light, saturated rainbow color, `t` going once around the hues from 0 to 1.
-fn rainbow(t: f32) -> [f32; 3] {
-    use std::f32::consts::TAU;
-    [0.0, 2.0 / 3.0, 1.0 / 3.0].map(|phase| 0.65 + 0.35 * ((t + phase) * TAU).cos())
-}
-
-/// The color the game gives combo pickups on a given frame.
-fn combo_color(frame_number: i32) -> [f32; 3] {
-    use std::f64::consts::TAU;
-    let t = f64::from(frame_number) * COMBO_SPEED;
-    [0.0, 2.0 / 3.0, 1.0 / 3.0]
-        .map(|phase| COMBO_BASE + COMBO_AMPLITUDE * ((t + phase * TAU) % TAU).cos() as f32)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::f32::consts::TAU;
-
-    fn eased(ticks: f32, time_constant: f32) -> f32 {
-        (-ticks / time_constant).exp()
-    }
-
-    #[test]
-    fn fades_ease_exponentially_with_ticks() {
-        let id = PickupsId::for_tests(0x1000, 3);
-        let mut fades = Fades::default();
-        fades.begin(id, 3);
-        fades.set_target(1, 0.0, 10.0);
-        fades.ease(100);
-        assert_eq!(fades.get(1), 1.0, "no time has passed on the first frame");
-
-        fades.begin(id, 3);
-        fades.set_target(1, 0.0, 10.0);
-        fades.ease(110);
-        assert!((fades.get(1) - eased(10.0, 10.0)).abs() < 1e-6);
-        assert_eq!(fades.get(0), 1.0, "the others stay at full opacity");
-        assert_eq!(fades.get(7), 1.0, "unknown pickups are opaque");
-    }
-
-    #[test]
-    fn fades_skip_at_most_half_a_second() {
-        let id = PickupsId::for_tests(0x1000, 1);
-        let mut fades = Fades::default();
-        let frame = |fades: &mut Fades, frame_number: i32| {
-            fades.begin(id, 1);
-            fades.set_target(0, 0.0, 60.0);
-            fades.ease(frame_number);
-        };
-        frame(&mut fades, 0);
-        frame(&mut fades, 100_000);
-        assert!((fades.get(0) - eased(60.0, 60.0)).abs() < 1e-6);
-        frame(&mut fades, 50_000);
-        assert!(
-            (fades.get(0) - eased(60.0, 60.0)).abs() < 1e-6,
-            "going back in time changes nothing"
-        );
-        frame(&mut fades, i32::MAX);
-        let before = fades.get(0);
-        frame(&mut fades, i32::MIN.wrapping_add(59));
-        assert!(
-            (fades.get(0) - before * eased(60.0, 60.0)).abs() < 1e-6,
-            "the frame number wraps around"
-        );
-    }
-
-    #[test]
-    fn fades_start_over_for_another_pickup_array() {
-        let (a, b) = (
-            PickupsId::for_tests(0x1000, 2),
-            PickupsId::for_tests(0x2000, 2),
-        );
-        let mut fades = Fades::default();
-        for frame_number in [0, 60] {
-            fades.begin(a, 2);
-            fades.set_target(0, 0.5, 1.0);
-            fades.ease(frame_number);
-        }
-        assert!((fades.get(0) - 0.5).abs() < 1e-3);
-        fades.begin(b, 2);
-        assert_eq!(fades.get(0), 1.0);
-    }
-
-    #[test]
-    fn dashed_lines_start_with_a_dash_and_stay_on_the_line() {
-        let (from, to, radius) = (Real2::new(1.0, 2.0), Real2::new(11.0, 2.0), 1.0);
-        let mut lines = Vec::new();
-        dashed_line(&mut lines, from, to, radius, [1.0; 4]);
-        let period = (DASH_LENGTH + DASH_GAP) * radius;
-        assert_eq!(lines.len(), (10.0 / period).ceil() as usize);
-        assert!(lines[0].start().same_bits(from));
-        for (k, line) in lines.iter().enumerate() {
-            assert!((line.start().x - (from.x + k as f32 * period)).abs() < 1e-4);
-            // Round caps stick out half the width at both ends, within the dash length.
-            let drawn = line.end().x - line.start().x + line.width();
-            assert!(drawn <= DASH_LENGTH * radius + 1e-4, "{k}: {drawn}");
-            assert!(line.end().x <= to.x + 1e-4 && line.start().y == 2.0);
-            assert!((line.width() - LEADER_WIDTH * radius).abs() < 1e-6);
-        }
-    }
-
-    #[test]
-    fn dashed_lines_of_no_length_have_no_dashes() {
-        let mut lines = Vec::new();
-        let at = Real2::new(3.0, 4.0);
-        dashed_line(&mut lines, at, at, 1.0, [1.0; 4]);
-        dashed_line(&mut lines, at, Real2::new(f32::NAN, 0.0), 1.0, [1.0; 4]);
-        assert!(lines.is_empty());
-    }
-
-    #[test]
-    fn the_halo_rings_the_icon_and_spins_clockwise() {
-        let center = Real2::new(10.0, -5.0);
-        let mut circles = Vec::new();
-        Halo::new(0, 2.0).add(&mut circles, center, 0.5);
-        assert_eq!(circles.len(), HALO_DOTS);
-        for circle in &circles {
-            let offset = Real2::new(circle.x[0] - center.x, circle.x[1] - center.y);
-            assert!((offset.x.hypot(offset.y) - HALO_RADIUS * 2.0).abs() < 1e-4);
-            assert!((circle.r - HALO_DOT_RADIUS * 2.0).abs() < 1e-6);
-            assert_eq!(circle.color[3], 0.5);
-        }
-        assert!((circles[0].x[0] - center.x - HALO_RADIUS * 2.0).abs() < 1e-4);
-
-        circles.clear();
-        Halo::new(10, 2.0).add(&mut circles, center, 0.5);
-        assert!(circles[0].x[1] < center.y, "the first dot turned clockwise");
-    }
-
-    #[test]
-    fn frame_number_animations_keep_moving_every_tick_late_in_the_game() {
-        let halo_angle = |frame_number| {
-            let mut circles = Vec::new();
-            Halo::new(frame_number, 1.0).add(&mut circles, Real2::default(), 1.0);
-            circles[0].x[1].atan2(circles[0].x[0])
-        };
-        for frame_number in [1_000, 100_000_000, i32::MAX - 1] {
-            let turned = halo_angle(frame_number) - halo_angle(frame_number + 1);
-            let turned = turned.rem_euclid(TAU);
-            assert!(
-                (turned - HALO_SPIN as f32).abs() < 1e-4,
-                "{frame_number}: {turned}"
-            );
-            let (now, next) = (combo_color(frame_number), combo_color(frame_number + 1));
-            assert!(now != next, "{frame_number}");
-        }
-    }
-
-    #[test]
-    fn combo_colors_cycle_within_the_games_range() {
-        let period = std::f64::consts::TAU / COMBO_SPEED;
-        for frame_number in (0..2000).step_by(7) {
-            let color = combo_color(frame_number);
-            for channel in color {
-                assert!(
-                    (COMBO_BASE - COMBO_AMPLITUDE - 1e-6..=COMBO_BASE + COMBO_AMPLITUDE + 1e-6)
-                        .contains(&channel)
-                );
-            }
-        }
-        let red = combo_color(0)[0];
-        assert!((red - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-6);
-        let half_cycle = combo_color((period / 2.0).round() as i32)[0];
-        assert!((half_cycle - (COMBO_BASE - COMBO_AMPLITUDE)).abs() < 1e-4);
     }
 }

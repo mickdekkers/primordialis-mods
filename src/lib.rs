@@ -4,8 +4,11 @@
 //! hot reload host during development). Everything about loading, hooking and reading the game is
 //! handled by `modkit`; this crate is just the features.
 
+mod combo;
 mod echolocation;
+mod fades;
 mod grid_pickups;
+mod leaders;
 mod map_icons;
 mod math;
 mod settle;
