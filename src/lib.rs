@@ -8,6 +8,7 @@ mod combo;
 mod echolocation;
 mod fades;
 mod grid_pickups;
+mod hide_duplicates;
 mod leaders;
 mod map_icons;
 mod math;
@@ -23,6 +24,7 @@ modkit::entry!(modkit::Mod {
         let grid = grid_pickups::GridPickups::default();
         vec![
             Box::new(map_icons::MapIcons::new(grid.clone())),
+            Box::new(hide_duplicates::HideDuplicates::new(grid.clone())),
             Box::new(echolocation::EcholocationFix::new(grid)),
         ]
     },

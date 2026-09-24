@@ -1,14 +1,22 @@
 //! The pickups whose map icons are spread out on a grid, shared by the map icons (which spread them)
-//! with the Echolocation fix (which hides their markers meanwhile).
+//! with the features that hide them elsewhere meanwhile: in the world, and from Echolocation.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use modkit::game::PickupsId;
 
 /// Only locked inside features' stage callbacks, which all run one after another on the render
-/// thread, and with `try_lock`: nothing ever waits for it. `revert` never touches it.
+/// thread, and with `try_lock`: nothing ever waits for it. `revert` never locks it, only `withdraw`s.
 #[derive(Clone, Default)]
-pub struct GridPickups(Arc<Mutex<Snapshot>>);
+pub struct GridPickups(Arc<Shared>);
+
+#[derive(Default)]
+struct Shared {
+    snapshot: Mutex<Snapshot>,
+    /// Set when the map icons stop (see `withdraw`): the snapshot is then out of date for good.
+    withdrawn: AtomicBool,
+}
 
 #[derive(Default)]
 struct Snapshot {
@@ -27,6 +35,14 @@ impl GridPickups {
             snapshot.indices.extend(indices);
             snapshot.indices.sort_unstable();
         });
+        self.0.withdrawn.store(false, Ordering::Relaxed);
+    }
+
+    /// No pickups are on a grid until the next `set`, for when the map icons are turned off: nothing
+    /// would clear the grid otherwise, and the other features would keep hiding its pickups. Doesn't
+    /// lock, so it can be called from `revert`.
+    pub fn withdraw(&self) {
+        self.0.withdrawn.store(true, Ordering::Relaxed);
     }
 
     /// No pickups are on a grid.
@@ -42,7 +58,8 @@ impl GridPickups {
     pub fn read(&self, pickups: PickupsId, f: impl FnOnce(&[usize])) {
         let mut f = Some(f);
         self.with(|snapshot| {
-            let indices: &[usize] = if snapshot.pickups == Some(pickups) {
+            let current = !self.0.withdrawn.load(Ordering::Relaxed);
+            let indices: &[usize] = if current && snapshot.pickups == Some(pickups) {
                 &snapshot.indices
             } else {
                 &[]
@@ -57,7 +74,7 @@ impl GridPickups {
     }
 
     fn with(&self, f: impl FnOnce(&mut Snapshot)) {
-        match self.0.try_lock() {
+        match self.0.snapshot.try_lock() {
             Ok(mut snapshot) => f(&mut snapshot),
             // A feature panicked while holding it: the list is still just a list.
             Err(TryLockError::Poisoned(poisoned)) => f(&mut poisoned.into_inner()),
@@ -90,6 +107,17 @@ mod tests {
         assert_eq!(read(&grid, b), [] as [usize; 0]);
         grid.clear();
         assert_eq!(read(&grid, a), [] as [usize; 0]);
+    }
+
+    #[test]
+    fn withdrawn_pickups_are_gone_until_set_again() {
+        let a = PickupsId::for_tests(0x1000, 10);
+        let grid = GridPickups::default();
+        grid.set(a, [4].into_iter());
+        grid.clone().withdraw();
+        assert_eq!(read(&grid, a), [] as [usize; 0]);
+        grid.set(a, [5].into_iter());
+        assert_eq!(read(&grid, a), [5]);
     }
 
     #[test]

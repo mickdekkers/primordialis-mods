@@ -5,9 +5,8 @@
 //!
 //! Pointing at icons with the mouse spreads out the ones that overlap onto a grid (other icons in the
 //! way make room on it), and shows the game's own tooltip for the cell under the cursor, the one it
-//! shows for pickups in the world. Meanwhile, the pickups on the grid aren't drawn in the world (if
-//! they're near enough to be), so they only show up once. For the same reason, while the map shows
-//! tooltips, the game's own tooltip for the pickup under the mouse in the world isn't shown.
+//! shows for pickups in the world. The pickups on the grid are shared (`GridPickups`), so the other
+//! features can keep them from showing up twice.
 
 use modkit::Feature;
 use modkit::game::{
@@ -44,7 +43,7 @@ static SPREAD_CLUSTERS: Toggle = Toggle::new(
     "Spread out map icons that overlap while the mouse is over them, so you can tell them apart.",
 );
 
-static SHOW_TOOLTIPS: Toggle = Toggle::new(
+pub(crate) static SHOW_TOOLTIPS: Toggle = Toggle::new(
     "show_tooltips",
     true,
     "Show the cell of the map icon under the mouse in a tooltip, as the game does for pickups near you.",
@@ -78,18 +77,11 @@ pub struct MapIcons {
     moved_index: Vec<Option<usize>>,
     settled: SettledPositions,
     spread: Spread,
-    /// The pickups on the grid, shared with the Echolocation fix, and kept here too: sorted pickup
-    /// indices, in the pickup array they index.
+    /// The pickups on the grid, shared with the features that hide them elsewhere.
     grid: GridPickups,
-    on_grid: (Option<PickupsId>, Vec<usize>),
-    hidden: Hidden,
-    /// Whether the game's tooltip for the pickup under the mouse in the world was active, and its
-    /// opacity, while it's hidden.
-    hidden_world_tooltip: Option<(bool, f32)>,
     fades: Fades,
     tooltip: Tooltip,
     logged_first_draw: bool,
-    logged_unrestored: bool,
 }
 
 /// Which icons are drawn over which: the spread out grid over the rest, and the icon under the mouse
@@ -99,15 +91,6 @@ enum Layer {
     Rest,
     Grid,
     Hovered,
-}
-
-/// Pickups on the grid hidden in the world, to be shown again.
-#[derive(Default)]
-struct Hidden {
-    /// The pickup array they were hidden in.
-    pickups: Option<PickupsId>,
-    /// Index of each hidden pickup, and its opacity.
-    alphas: Vec<(usize, f32)>,
 }
 
 /// A pickup whose icon is drawn this frame.
@@ -128,27 +111,14 @@ impl Feature for MapIcons {
     }
 
     fn stage_begin(&mut self, frame: &Frame, stage: Stage) {
-        if stage == Stage::CELL_PICKUPS {
-            self.hide_in_world(frame.game());
-        } else if stage == Stage::RACING_OVERLAY {
-            self.hide_world_tooltip(frame.game());
-        } else if stage == Stage::MENUS {
+        if stage == Stage::MENUS {
             self.draw(frame);
         }
     }
 
-    fn stage_end(&mut self, frame: &Frame, stage: Stage) {
-        if stage == Stage::CELL_PICKUPS {
-            self.restore_in_world(frame.game());
-        } else if stage == Stage::RACING_OVERLAY {
-            self.show_world_tooltip(frame.game());
-        }
-    }
-
-    fn revert(&mut self, game: &Game) {
-        // No logging here: it may run while the game's threads are paused.
-        self.show_in_world(game);
-        self.show_world_tooltip(game);
+    fn revert(&mut self, _game: &Game) {
+        // Turned off, or unloading: no icons are on a grid anymore.
+        self.grid.withdraw();
     }
 }
 
@@ -160,96 +130,22 @@ impl MapIcons {
         }
     }
 
-    /// Makes the pickups on the grid transparent while the game queues the pickups near the camera
-    /// to be drawn in the world, until `show_in_world`: their icons stand in for them. Not once the map
-    /// starts closing: its icons fade out then, and the pickups should be back at once.
-    fn hide_in_world(&mut self, game: &Game) {
-        self.restore_in_world(game);
-        let pickups = game.pickups();
-        if self.on_grid.0 != Some(pickups.id()) || !game.map_mode() {
-            return;
-        }
-        self.hidden.pickups = Some(pickups.id());
-        for &index in &self.on_grid.1 {
-            if let Some(pickup) = pickups.get(index) {
-                self.hidden.alphas.push((index, pickup.alpha()));
-                pickup.set_alpha(0.0);
-            }
-        }
-    }
-
-    /// Shows the pickups hidden in the world again, logging (once) if the pickups changed in between.
-    fn restore_in_world(&mut self, game: &Game) {
-        if !self.show_in_world(game) && !self.logged_unrestored {
-            self.logged_unrestored = true;
-            log::warn("pickups changed while hidden in the world; showed those still hidden");
-        }
-    }
-
-    /// Shows the pickups hidden in the world again. Returns false if the pickup array changed in
-    /// between.
-    fn show_in_world(&mut self, game: &Game) -> bool {
-        if self.hidden.alphas.is_empty() {
-            return true;
-        }
-        let pickups = game.pickups();
-        // Nothing should change the pickups in between. If something did, an index may now refer to
-        // another pickup, so only a pickup still hidden is shown again. Leaving them all instead would
-        // leave them hidden for good.
-        for &(index, alpha) in &self.hidden.alphas {
-            if let Some(pickup) = pickups.get(index)
-                && pickup.alpha().to_bits() == 0f32.to_bits()
-            {
-                pickup.set_alpha(alpha);
-            }
-        }
-        self.hidden.alphas.clear();
-        self.hidden.pickups == Some(pickups.id())
-    }
-
-    /// While the map is open and shows tooltips, keeps the game from drawing its tooltip for the
-    /// pickup under the mouse in the world (it does in this stage) until `show_world_tooltip`: it
-    /// would show up on the map, next to the one for the icon under the mouse.
-    fn hide_world_tooltip(&mut self, game: &Game) {
-        self.show_world_tooltip(game);
-        if !game.map_open() || !SHOW_TOOLTIPS.get() {
-            return;
-        }
-        let tooltip = game.world_tooltip();
-        self.hidden_world_tooltip = Some((tooltip.active(), tooltip.alpha()));
-        tooltip.set_active(false);
-        tooltip.set_alpha(0.0);
-    }
-
-    fn show_world_tooltip(&mut self, game: &Game) {
-        let Some((active, alpha)) = self.hidden_world_tooltip.take() else {
-            return;
-        };
-        let tooltip = game.world_tooltip();
-        // Nothing should change it in between, but if something did, leave it be.
-        if !tooltip.active() && tooltip.alpha().to_bits() == 0f32.to_bits() {
-            tooltip.set_active(active);
-            tooltip.set_alpha(alpha);
-        }
-    }
-
-    /// Records which pickups are on the grid, and shares it.
+    /// Shares which pickups are on the grid.
     fn set_on_grid(&mut self, pickups: Option<PickupsId>) {
-        let (id, indices) = &mut self.on_grid;
-        *id = pickups;
-        indices.clear();
-        indices.extend(
-            self.spread
-                .moved()
-                .iter()
-                .map(|moved| self.visible[moved.icon].pickup),
-        );
-        indices.sort_unstable();
         match pickups {
-            Some(pickups) => self.grid.set(pickups, indices.iter().copied()),
+            Some(pickups) => {
+                let visible = &self.visible;
+                let on_grid = self
+                    .spread
+                    .moved()
+                    .iter()
+                    .map(|moved| visible[moved.icon].pickup);
+                self.grid.set(pickups, on_grid);
+            }
             None => self.grid.clear(),
         }
     }
+
     fn draw(&mut self, frame: &Frame) {
         let game = frame.game();
         self.settled.refresh(game);
