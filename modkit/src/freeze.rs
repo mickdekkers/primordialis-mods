@@ -164,9 +164,10 @@ fn pause_by_iterating(capacity: usize) -> Pausing {
     }
 }
 
-/// Fallback: lists the other threads with a Toolhelp snapshot, then pauses them. A thread created in
-/// between isn't paused; it would have to reach the patched code within milliseconds of starting.
-fn pause_with_toolhelp() -> Result<Paused> {
+/// Fallback: lists the other threads with a Toolhelp snapshot, then pauses them, or returns `None` if
+/// one of them can't be paused right now. A thread created in between isn't paused; it would have to
+/// reach the patched code within milliseconds of starting.
+fn pause_with_toolhelp() -> Result<Option<Paused>> {
     let ids = other_thread_ids()?;
     let mut paused = Paused {
         threads: Vec::with_capacity(ids.len()),
@@ -174,13 +175,15 @@ fn pause_with_toolhelp() -> Result<Paused> {
     for id in ids {
         // SAFETY: Opens a thread by ID; `add` takes ownership of the handle.
         unsafe {
+            // A thread that can't be opened has exited since the snapshot.
             let thread = OpenThread(THREAD_ACCESS, 0, id);
-            if !thread.is_null() {
-                paused.add(thread);
+            // One that can't be paused may still run: like `pause_by_iterating`, try again later.
+            if !thread.is_null() && !paused.add(thread) {
+                return Ok(None);
             }
         }
     }
-    Ok(paused)
+    Ok(Some(paused))
 }
 
 fn other_thread_ids() -> Result<Vec<u32>> {
@@ -210,7 +213,7 @@ fn other_thread_ids() -> Result<Vec<u32>> {
 fn pause_other_threads(capacity: &mut usize) -> Result<Option<Paused>> {
     loop {
         if USE_TOOLHELP.load(Ordering::Relaxed) {
-            return pause_with_toolhelp().map(Some);
+            return pause_with_toolhelp();
         }
         match pause_by_iterating(*capacity) {
             Pausing::Done(paused) => return Ok(Some(paused)),
