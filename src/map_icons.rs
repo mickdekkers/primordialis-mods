@@ -6,8 +6,8 @@
 //! Pointing at icons with the mouse spreads out the ones that overlap onto a grid (other icons in the
 //! way make room on it), and shows the game's own tooltip for the cell under the cursor, the one it
 //! shows for pickups in the world. Meanwhile, the pickups on the grid aren't drawn in the world (if
-//! they're near enough to be), so they only show up once. For the same reason, the game's tooltip for
-//! the pickup under the mouse in the world isn't shown while the map is open.
+//! they're near enough to be), so they only show up once. For the same reason, while the map shows
+//! tooltips, the game's own tooltip for the pickup under the mouse in the world isn't shown.
 
 use modkit::Feature;
 use modkit::game::{
@@ -295,12 +295,12 @@ impl MapIcons {
         self.hidden.pickups == Some(pickups.id())
     }
 
-    /// While the map is open, keeps the game from drawing its tooltip for the pickup under the mouse
-    /// in the world (it does in this stage) until `show_world_tooltip`: it would show up on the map,
-    /// next to the one for the icon under the mouse.
+    /// While the map is open and shows tooltips, keeps the game from drawing its tooltip for the
+    /// pickup under the mouse in the world (it does in this stage) until `show_world_tooltip`: it
+    /// would show up on the map, next to the one for the icon under the mouse.
     fn hide_world_tooltip(&mut self, game: &Game) {
         self.show_world_tooltip(game);
-        if !game.map_open() {
+        if !game.map_open() || !SHOW_TOOLTIPS.get() {
             return;
         }
         let tooltip = game.world_tooltip();
