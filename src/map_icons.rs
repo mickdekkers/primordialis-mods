@@ -9,21 +9,14 @@
 //! features can keep them from showing up twice.
 
 use modkit::Feature;
-use modkit::game::{
-    CircleRenderInfo, Frame, Game, IconRenderInfo, LineRenderInfo, PickupsId, Real2, Stage,
-};
+use modkit::game::{CircleRenderInfo, Frame, Game, IconRenderInfo, LineRenderInfo, Real2, Stage};
 use modkit::log;
 use modkit::settings::{Setting, Toggle};
 
 use crate::combo::{HALO_ALPHA, Halo, combo_color};
-use crate::fades::{
-    FADE_TICKS_FAR, FADE_TICKS_NEAR, Fades, SPOTLIGHT_EDGE, SPOTLIGHT_RADIUS, UNFOCUSED_ALPHA,
-};
+use crate::fades::Fades;
 use crate::grid_pickups::GridPickups;
-use crate::leaders::{
-    LEADER_ALPHA, LEADER_DOT_RADIUS, LEADER_WIDTH, POINTED_LEADER_ALPHA, POINTED_LEADER_SCALE,
-    dashed_line,
-};
+use crate::leaders::Leader;
 use crate::math;
 use crate::settle::SettledPositions;
 use crate::spread::{self, Spread};
@@ -62,19 +55,20 @@ const HOVER_SCALE: f32 = 1.15;
 
 #[derive(Default)]
 pub struct MapIcons {
-    /// Reused every frame, to avoid allocating.
-    visible: Vec<Visible>,
+    /// The icons drawn this frame, in the order of their pickups: each one's pickup index, position
+    /// and look. Reused every frame, like the rest, to avoid allocating.
+    pickups: Vec<usize>,
     positions: Vec<Real2>,
-    pickup_indices: Vec<usize>,
-    /// Where each visible icon is drawn: its position, unless spread out.
+    looks: Vec<Look>,
+    /// Where each icon is drawn: its position, unless spread out.
     shown: Vec<Real2>,
+    /// For each icon, its index in `Spread::moved`, if it's on the grid.
+    moved_index: Vec<Option<usize>>,
     /// The order icons are drawn in, each drawn over the ones before, and how much they're faded.
     order: Vec<(Layer, usize, f32)>,
     icons: Vec<IconRenderInfo>,
     circles: Vec<CircleRenderInfo>,
     lines: Vec<LineRenderInfo>,
-    /// For each visible icon, its index in `Spread::moved`, if it's on the grid.
-    moved_index: Vec<Option<usize>>,
     settled: SettledPositions,
     spread: Spread,
     /// The pickups on the grid, shared with the features that hide them elsewhere.
@@ -93,9 +87,8 @@ enum Layer {
     Hovered,
 }
 
-/// A pickup whose icon is drawn this frame.
-struct Visible {
-    pickup: usize,
+/// How an icon looks this frame.
+struct Look {
     color: [f32; 4],
     uv: [f32; 2],
     is_combo: bool,
@@ -130,28 +123,12 @@ impl MapIcons {
         }
     }
 
-    /// Shares which pickups are on the grid.
-    fn set_on_grid(&mut self, pickups: Option<PickupsId>) {
-        match pickups {
-            Some(pickups) => {
-                let visible = &self.visible;
-                let on_grid = self
-                    .spread
-                    .moved()
-                    .iter()
-                    .map(|moved| visible[moved.icon].pickup);
-                self.grid.set(pickups, on_grid);
-            }
-            None => self.grid.clear(),
-        }
-    }
-
     fn draw(&mut self, frame: &Frame) {
         let game = frame.game();
         self.settled.refresh(game);
         if !game.map_open() {
             self.spread.close_now();
-            self.set_on_grid(None);
+            self.grid.clear();
             self.fades.clear();
             self.tooltip.hide();
             return;
@@ -172,142 +149,33 @@ impl MapIcons {
             .filter(|_| game.map_mode())
             .and_then(|mouse| frame.ui_camera().project(mouse))
             .and_then(|ndc| camera.unproject(ndc));
-
-        if SPREAD_CLUSTERS.get() {
-            self.spread.update(
-                game.pickups().id(),
-                &self.pickup_indices,
-                &self.positions,
-                radius,
-                mouse_on_map,
-                frame_number,
-            );
-        } else {
-            self.spread.close_now();
-        }
-        self.set_on_grid(Some(game.pickups().id()));
-        self.shown.clone_from(&self.positions);
-        for moved in self.spread.moved() {
-            self.shown[moved.icon] = moved.from.lerp(moved.to, moved.progress);
-        }
-        self.moved_index.clear();
-        self.moved_index.resize(self.visible.len(), None);
-        for (index, moved) in self.spread.moved().iter().enumerate() {
-            self.moved_index[moved.icon] = Some(index);
-        }
-        let (shown, moved, moved_index) = (&self.shown, self.spread.moved(), &self.moved_index);
-        // Icons on the grid can be pointed at from further, as they spread out.
-        let reach = |icon: usize| {
-            let progress = moved_index[icon].map_or(0.0, |index| moved[index].progress);
-            math::lerp(
-                spread::HOVER_DISTANCE,
-                spread::GRID_HOVER_DISTANCE,
-                progress,
-            ) * radius
-        };
-        let hovered = mouse_on_map.and_then(|mouse| {
-            (0..shown.len())
-                .map(|icon| (icon, shown[icon].distance(mouse)))
-                .filter(|&(icon, d)| d <= reach(icon))
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(icon, _)| icon)
-        });
+        self.spread_out(game, radius, mouse_on_map, frame_number);
+        let hovered = mouse_on_map.and_then(|mouse| self.hovered(mouse, radius));
 
         // The icon under the mouse stands out, and the other icons around the mouse fade.
         let pickups = game.pickups();
         self.fades.begin(pickups.id(), pickups.len());
         if let Some(mouse) = mouse_on_map {
-            let (inner, outer) = (SPOTLIGHT_RADIUS * radius, SPOTLIGHT_EDGE * radius);
-            for (icon, visible) in self.visible.iter().enumerate() {
-                let d = shown[icon].distance(mouse);
-                let alpha = match hovered {
-                    Some(hovered) if hovered != icon => {
-                        math::lerp(UNFOCUSED_ALPHA, 1.0, math::smoothstep(inner, outer, d))
-                    }
-                    _ => 1.0,
-                };
-                let ticks = math::lerp(FADE_TICKS_NEAR, FADE_TICKS_FAR, (d / outer).min(1.0));
-                self.fades.set_target(visible.pickup, alpha, ticks);
-            }
+            let icons = self.pickups.iter().copied().zip(self.shown.iter().copied());
+            let pointed = hovered.map(|icon| self.pickups[icon]);
+            self.fades.spotlight(icons, mouse, pointed, radius);
         }
         self.fades.ease(frame_number);
+        self.order_icons(hovered);
 
-        self.order.clear();
-        self.order.extend(
-            (0..self.visible.len())
-                .map(|icon| (Layer::Rest, icon, self.fades.get(self.visible[icon].pickup))),
-        );
-        for moved in self.spread.moved() {
-            self.order[moved.icon].0 = Layer::Grid;
-        }
-        if let Some(icon) = hovered {
-            self.order[icon].0 = Layer::Hovered;
-        }
-        // Stable, so icons within a layer keep the game's order.
-        self.order.sort_by_key(|&(layer, _, _)| layer);
-
-        // Leader lines first, so icons cover their ends, in the icons' order, so the hovered icon's
-        // line crosses over the rest.
         self.circles.clear();
         self.lines.clear();
-        for &(_, icon, fade) in &self.order {
-            let Some(moved) = self.moved_index[icon].map(|index| &self.spread.moved()[index])
-            else {
-                continue;
-            };
-            let (from, to) = (moved.from, shown[icon]);
-            let visibility = moved.progress * self.visible[icon].color[3];
-            let dot = if hovered == Some(icon) {
-                let alpha = math::lerp(LEADER_ALPHA, POINTED_LEADER_ALPHA, fade) * visibility;
-                let color = [1.0, 1.0, 1.0, alpha];
-                let width = LEADER_WIDTH * POINTED_LEADER_SCALE * radius;
-                self.lines.push(LineRenderInfo::new(from, to, width, color));
-                (LEADER_DOT_RADIUS * POINTED_LEADER_SCALE, color)
-            } else {
-                let color = [1.0, 1.0, 1.0, LEADER_ALPHA * fade * visibility];
-                dashed_line(&mut self.lines, from, to, radius, color);
-                (LEADER_DOT_RADIUS, color)
-            };
-            self.circles.push(CircleRenderInfo {
-                x: [from.x, from.y, 0.0],
-                r: dot.0 * radius,
-                color: dot.1,
-            });
-        }
-
+        self.add_leaders(hovered, radius);
         frame.draw_lines(&self.lines);
-
-        let halo = Halo::new(frame_number, radius);
-        self.icons.clear();
-        for &(layer, icon, fade) in &self.order {
-            let visible = &self.visible[icon];
-            let at = shown[icon];
-            let mut color = visible.color;
-            color[3] *= fade;
-            let scale = if layer == Layer::Hovered {
-                HOVER_SCALE
-            } else {
-                1.0
-            };
-            self.icons.push(IconRenderInfo {
-                x: [at.x, at.y, 0.0],
-                r: radius * scale,
-                color,
-                uv: visible.uv,
-            });
-            if visible.is_combo {
-                halo.add(&mut self.circles, at, color[3] * HALO_ALPHA);
-            }
-        }
-
+        self.add_icons(frame_number, radius);
         if !self.logged_first_draw {
             self.logged_first_draw = true;
             log::info(&format!(
                 "first map draw: {} of {} pickups in explored areas ({} combo, \
                  {moved_out_of_walls} moved out of walls), icon radius {radius:.1} world units",
                 self.icons.len(),
-                game.pickups().len(),
-                self.visible.iter().filter(|v| v.is_combo).count(),
+                pickups.len(),
+                self.looks.iter().filter(|look| look.is_combo).count(),
             ));
         }
         frame.draw_circles(&self.circles);
@@ -320,24 +188,24 @@ impl MapIcons {
         frame.draw_cell_icons(&self.icons, light);
 
         if SHOW_TOOLTIPS.get() {
-            let pointed = hovered
-                .and_then(|icon| Some((pickups.get(self.visible[icon].pickup)?, shown[icon])));
+            let pointed =
+                hovered.and_then(|icon| Some((pickups.get(self.pickups[icon])?, self.shown[icon])));
             self.tooltip.draw(frame, pointed);
         } else {
             self.tooltip.hide();
         }
     }
 
-    /// Fills `visible`, `positions` and `pickup_indices` with the pickups to draw. Returns how many
-    /// were moved out of walls.
+    /// Fills `pickups`, `positions` and `looks` with the icons to draw. Returns how many were moved
+    /// out of walls.
     fn collect(&mut self, game: &Game) -> usize {
         let fade = game.map_fade();
         let combo_rgb = combo_color(game.frame_number());
         let (pickups, map) = (game.pickups(), game.map());
         let fix_positions = FIX_ICON_POSITIONS.get();
-        self.visible.clear();
+        self.pickups.clear();
         self.positions.clear();
-        self.pickup_indices.clear();
+        self.looks.clear();
         let mut moved = 0;
         for (index, pickup) in pickups.iter().enumerate() {
             let Some(material) = pickup.material() else {
@@ -364,15 +232,135 @@ impl MapIcons {
             color[3] = color[3].clamp(0.0, 1.0)
                 * fade
                 * math::smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
-            self.visible.push(Visible {
-                pickup: index,
+            self.pickups.push(index);
+            self.positions.push(pos);
+            self.looks.push(Look {
                 color,
                 uv: material.icon_uv(),
                 is_combo,
             });
-            self.positions.push(pos);
-            self.pickup_indices.push(index);
         }
         moved
+    }
+
+    /// Spreads out the icons that overlap under the mouse (if that's on), shares which pickups are
+    /// on the grid, and works out where each icon is drawn.
+    fn spread_out(
+        &mut self,
+        game: &Game,
+        radius: f32,
+        mouse_on_map: Option<Real2>,
+        frame_number: i32,
+    ) {
+        let pickups = game.pickups().id();
+        if SPREAD_CLUSTERS.get() {
+            self.spread.update(
+                pickups,
+                &self.pickups,
+                &self.positions,
+                radius,
+                mouse_on_map,
+                frame_number,
+            );
+        } else {
+            self.spread.close_now();
+        }
+        let on_grid = self
+            .spread
+            .moved()
+            .iter()
+            .map(|moved| self.pickups[moved.icon]);
+        self.grid.set(pickups, on_grid);
+        self.shown.clone_from(&self.positions);
+        self.moved_index.clear();
+        self.moved_index.resize(self.pickups.len(), None);
+        for (index, moved) in self.spread.moved().iter().enumerate() {
+            self.shown[moved.icon] = moved.from.lerp(moved.to, moved.progress);
+            self.moved_index[moved.icon] = Some(index);
+        }
+    }
+
+    /// The icon the mouse at `mouse` points at, if any: the nearest one within reach.
+    fn hovered(&self, mouse: Real2, radius: f32) -> Option<usize> {
+        let moved = self.spread.moved();
+        // Icons on the grid can be pointed at from further, as they spread out.
+        let reach = |icon: usize| {
+            let progress = self.moved_index[icon].map_or(0.0, |index| moved[index].progress);
+            math::lerp(
+                spread::HOVER_DISTANCE,
+                spread::GRID_HOVER_DISTANCE,
+                progress,
+            ) * radius
+        };
+        (0..self.shown.len())
+            .map(|icon| (icon, self.shown[icon].distance(mouse)))
+            .filter(|&(icon, d)| d <= reach(icon))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(icon, _)| icon)
+    }
+
+    /// Orders the icons for drawing, with how faded each is: the grid over the rest, and the icon
+    /// under the mouse over everything.
+    fn order_icons(&mut self, hovered: Option<usize>) {
+        let fades = &self.fades;
+        self.order.clear();
+        self.order.extend(
+            self.pickups
+                .iter()
+                .enumerate()
+                .map(|(icon, &pickup)| (Layer::Rest, icon, fades.get(pickup))),
+        );
+        for moved in self.spread.moved() {
+            self.order[moved.icon].0 = Layer::Grid;
+        }
+        if let Some(icon) = hovered {
+            self.order[icon].0 = Layer::Hovered;
+        }
+        // Stable, so icons within a layer keep the game's order.
+        self.order.sort_by_key(|&(layer, _, _)| layer);
+    }
+
+    /// Adds the leaders of the icons on the grid, in the icons' order, so the hovered icon's line
+    /// crosses over the rest. They're drawn before the icons, so that icons cover their ends.
+    fn add_leaders(&mut self, hovered: Option<usize>, radius: f32) {
+        let moved = self.spread.moved();
+        for &(_, icon, fade) in &self.order {
+            let Some(index) = self.moved_index[icon] else {
+                continue;
+            };
+            let leader = Leader {
+                from: moved[index].from,
+                to: self.shown[icon],
+                pointed: hovered == Some(icon),
+                fade,
+                visibility: moved[index].progress * self.looks[icon].color[3],
+            };
+            leader.add(radius, &mut self.lines, &mut self.circles);
+        }
+    }
+
+    /// Adds the icons in their order, and the halos of combo pickups.
+    fn add_icons(&mut self, frame_number: i32, radius: f32) {
+        let halo = Halo::new(frame_number, radius);
+        self.icons.clear();
+        for &(layer, icon, fade) in &self.order {
+            let (look, at) = (&self.looks[icon], self.shown[icon]);
+            let mut color = look.color;
+            color[3] *= fade;
+            let scale = if layer == Layer::Hovered {
+                HOVER_SCALE
+            } else {
+                1.0
+            };
+            self.icons.push(IconRenderInfo {
+                x: [at.x, at.y, 0.0],
+                r: radius * scale,
+                color,
+                uv: look.uv,
+            });
+            if look.is_combo {
+                halo.add(&mut self.circles, at, color[3] * HALO_ALPHA);
+            }
+        }
     }
 }

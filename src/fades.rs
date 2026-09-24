@@ -1,22 +1,22 @@
 //! Fading the map icons around the icon under the mouse.
 
-use modkit::game::PickupsId;
+use modkit::game::{PickupsId, Real2};
 
-use crate::math::TickClock;
+use crate::math::{self, TickClock};
 
 /// While the mouse points at an icon, the other icons around the mouse (and their lines and dots on
 /// the grid) fade to this opacity, and back once it doesn't.
-pub(crate) const UNFOCUSED_ALPHA: f32 = 0.5;
+const UNFOCUSED_ALPHA: f32 = 0.5;
 /// Icons ease towards the opacity they should have with a time constant, in `frame_number` ticks (120
 /// per second), of the first under the mouse (25 ms), rising with the distance from it to the second
 /// at the spotlight's edge and beyond (125 ms, so ~95% of the way there in 375 ms): what the mouse
 /// points at responds at once, and the icons around it follow smoothly.
-pub(crate) const FADE_TICKS_NEAR: f32 = 3.0;
-pub(crate) const FADE_TICKS_FAR: f32 = 15.0;
+const FADE_TICKS_NEAR: f32 = 3.0;
+const FADE_TICKS_FAR: f32 = 15.0;
 /// The icons faded are those within this many icon radii of the mouse, easing back to full opacity
 /// by the second, so icons further away stay clear.
-pub(crate) const SPOTLIGHT_RADIUS: f32 = 2.0;
-pub(crate) const SPOTLIGHT_EDGE: f32 = 10.0;
+const SPOTLIGHT_RADIUS: f32 = 2.0;
+const SPOTLIGHT_EDGE: f32 = 10.0;
 
 /// How faded each icon is. Every icon eases on its own, so the one the mouse leaves doesn't jump,
 /// whether to the next icon (it fades out as that one fades in) or off them all (the rest fade back in
@@ -34,7 +34,7 @@ pub(crate) struct Fades {
 
 impl Fades {
     /// Starts a frame in which every pickup's icon eases slowly towards full opacity, unless
-    /// `set_target` says otherwise before `ease`.
+    /// `spotlight` says otherwise before `ease`.
     pub(crate) fn begin(&mut self, pickups: PickupsId, len: usize) {
         if self.pickups != Some(pickups) {
             self.pickups = Some(pickups);
@@ -45,7 +45,32 @@ impl Fades {
         self.targets.resize(len, (1.0, FADE_TICKS_FAR));
     }
 
-    pub(crate) fn set_target(&mut self, pickup: usize, alpha: f32, ticks: f32) {
+    /// Sets this frame's targets for the icons around the mouse at `mouse`, for icons `radius` large.
+    /// `icons` are the pickups' indices and where their icons are drawn. While the mouse points at
+    /// one of them (`pointed`, a pickup index), that one stays opaque and the others fade, the more
+    /// the nearer they are. The nearer an icon is to the mouse, the faster it follows.
+    pub(crate) fn spotlight(
+        &mut self,
+        icons: impl Iterator<Item = (usize, Real2)>,
+        mouse: Real2,
+        pointed: Option<usize>,
+        radius: f32,
+    ) {
+        let (inner, outer) = (SPOTLIGHT_RADIUS * radius, SPOTLIGHT_EDGE * radius);
+        for (pickup, at) in icons {
+            let d = at.distance(mouse);
+            let alpha = match pointed {
+                Some(pointed) if pointed != pickup => {
+                    math::lerp(UNFOCUSED_ALPHA, 1.0, math::smoothstep(inner, outer, d))
+                }
+                _ => 1.0,
+            };
+            let ticks = math::lerp(FADE_TICKS_NEAR, FADE_TICKS_FAR, (d / outer).min(1.0));
+            self.set_target(pickup, alpha, ticks);
+        }
+    }
+
+    fn set_target(&mut self, pickup: usize, alpha: f32, ticks: f32) {
         if let Some(target) = self.targets.get_mut(pickup) {
             *target = (alpha, ticks);
         }
@@ -119,6 +144,37 @@ mod tests {
             (fades.get(0) - before * eased(60.0, 60.0)).abs() < 1e-6,
             "the frame number wraps around"
         );
+    }
+
+    #[test]
+    fn the_spotlight_fades_icons_near_the_one_pointed_at() {
+        let id = PickupsId::for_tests(0x1000, 4);
+        let mut fades = Fades::default();
+        let mouse = Real2::new(100.0, 0.0);
+        let icons = [
+            (0, mouse),
+            (1, Real2::new(101.0, 0.0)),
+            (3, Real2::new(100.0, -60.0)),
+        ];
+        fades.begin(id, 4);
+        fades.spotlight(icons.into_iter(), mouse, Some(0), 2.0);
+        assert_eq!(
+            fades.targets[0],
+            (1.0, FADE_TICKS_NEAR),
+            "the one pointed at"
+        );
+        assert_eq!(fades.targets[1].0, UNFOCUSED_ALPHA, "one right next to it");
+        assert!(fades.targets[1].1 < FADE_TICKS_FAR);
+        assert_eq!(fades.targets[2], (1.0, FADE_TICKS_FAR), "not drawn");
+        assert_eq!(
+            fades.targets[3],
+            (1.0, FADE_TICKS_FAR),
+            "past the spotlight"
+        );
+
+        fades.begin(id, 4);
+        fades.spotlight(icons.into_iter(), mouse, None, 2.0);
+        assert_eq!(fades.targets[1].0, 1.0, "pointing at nothing fades nothing");
     }
 
     #[test]

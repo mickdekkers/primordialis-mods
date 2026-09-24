@@ -1,23 +1,66 @@
 //! The lines that connect spread out map icons to where their pickups are.
 
-use modkit::game::{LineRenderInfo, Real2};
+use modkit::game::{CircleRenderInfo, LineRenderInfo, Real2};
+
+use crate::math;
 
 /// Spread out icons are connected to where their pickups are by a dashed line this wide (dashes and
 /// the gaps between them this long), ending in a dot this large, in icon radii, and this opaque
 /// relative to the icon.
-pub(crate) const LEADER_WIDTH: f32 = 0.15;
-pub(crate) const LEADER_DOT_RADIUS: f32 = 0.2;
+const LEADER_WIDTH: f32 = 0.15;
+const LEADER_DOT_RADIUS: f32 = 0.2;
 const DASH_LENGTH: f32 = 0.45;
 const DASH_GAP: f32 = 0.35;
-pub(crate) const LEADER_ALPHA: f32 = 0.6;
+const LEADER_ALPHA: f32 = 0.6;
 /// The spread out icon under the mouse gets a solid line this much wider, a dot this much larger,
 /// and this opaque.
-pub(crate) const POINTED_LEADER_SCALE: f32 = 1.5;
-pub(crate) const POINTED_LEADER_ALPHA: f32 = 1.0;
+const POINTED_LEADER_SCALE: f32 = 1.5;
+const POINTED_LEADER_ALPHA: f32 = 1.0;
+
+/// The leader of a spread out icon: a line from where its pickup is to where the icon is drawn, and a
+/// dot at its pickup.
+pub(crate) struct Leader {
+    pub from: Real2,
+    pub to: Real2,
+    /// Whether the mouse points at the icon: its leader is then solid and bolder, instead of dashed.
+    pub pointed: bool,
+    /// The icon's opacity from fading around the mouse.
+    pub fade: f32,
+    /// How far the icon is spread out, times its opacity.
+    pub visibility: f32,
+}
+
+impl Leader {
+    /// Adds the line to `lines` and the dot to `dots`, for icons `radius` large.
+    pub(crate) fn add(
+        &self,
+        radius: f32,
+        lines: &mut Vec<LineRenderInfo>,
+        dots: &mut Vec<CircleRenderInfo>,
+    ) {
+        let (from, to) = (self.from, self.to);
+        let dot = if self.pointed {
+            let alpha = math::lerp(LEADER_ALPHA, POINTED_LEADER_ALPHA, self.fade) * self.visibility;
+            let color = [1.0, 1.0, 1.0, alpha];
+            let width = LEADER_WIDTH * POINTED_LEADER_SCALE * radius;
+            lines.push(LineRenderInfo::new(from, to, width, color));
+            (LEADER_DOT_RADIUS * POINTED_LEADER_SCALE, color)
+        } else {
+            let color = [1.0, 1.0, 1.0, LEADER_ALPHA * self.fade * self.visibility];
+            dashed_line(lines, from, to, radius, color);
+            (LEADER_DOT_RADIUS, color)
+        };
+        dots.push(CircleRenderInfo {
+            x: [from.x, from.y, 0.0],
+            r: dot.0 * radius,
+            color: dot.1,
+        });
+    }
+}
 
 /// Adds the dashes of a dashed line from `from` to `to` to `lines`, for an icon `radius` large,
 /// starting with a dash at `from`.
-pub(crate) fn dashed_line(
+fn dashed_line(
     lines: &mut Vec<LineRenderInfo>,
     from: Real2,
     to: Real2,
@@ -66,6 +109,33 @@ mod tests {
             assert!(line.end().x <= to.x + 1e-4 && line.start().y == 2.0);
             assert!((line.width() - LEADER_WIDTH * radius).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn leaders_are_solid_and_bolder_when_pointed_at() {
+        let mut leader = Leader {
+            from: Real2::new(0.0, 0.0),
+            to: Real2::new(10.0, 0.0),
+            pointed: true,
+            fade: 1.0,
+            visibility: 0.5,
+        };
+        let (mut lines, mut dots) = (Vec::new(), Vec::new());
+        leader.add(2.0, &mut lines, &mut dots);
+        assert_eq!(lines.len(), 1);
+        assert!((lines[0].width() - LEADER_WIDTH * POINTED_LEADER_SCALE * 2.0).abs() < 1e-6);
+        assert_eq!(lines[0].color()[3], POINTED_LEADER_ALPHA * 0.5);
+        assert_eq!(dots.len(), 1);
+        assert!((dots[0].r - LEADER_DOT_RADIUS * POINTED_LEADER_SCALE * 2.0).abs() < 1e-6);
+        assert_eq!(dots[0].x, [0.0, 0.0, 0.0], "the dot is at the pickup");
+
+        leader.pointed = false;
+        leader.fade = 0.5;
+        let (mut lines, mut dots) = (Vec::new(), Vec::new());
+        leader.add(2.0, &mut lines, &mut dots);
+        assert!(lines.len() > 1, "dashed");
+        assert_eq!(lines[0].color()[3], LEADER_ALPHA * 0.5 * 0.5);
+        assert!((dots[0].r - LEADER_DOT_RADIUS * 2.0).abs() < 1e-6);
     }
 
     #[test]
