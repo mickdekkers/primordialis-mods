@@ -180,13 +180,15 @@ impl Frame<'_> {
     }
 
     /// Draws a line between two world positions, `width` world units wide with round caps, with the
-    /// frame's camera.
+    /// frame's camera. Panics if this game version doesn't have `draw_line` as expected, which turns
+    /// off the feature that called it.
     pub fn draw_line(&self, from: Real2, to: Real2, width: f32, color: [f32; 4]) {
+        let address = self.game.bindings.draw_line.get();
         let delta = Real2::new(to.x - from.x, to.y - from.y);
         // SAFETY: The game's `draw_line`, called on the render thread with the world render context,
         // of which it only reads the camera and resolution.
         unsafe {
-            let draw: DrawLine = std::mem::transmute(self.game.bindings.draw_line);
+            let draw: DrawLine = std::mem::transmute(address);
             draw(
                 self.render_context as *const c_void,
                 from,

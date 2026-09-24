@@ -11,12 +11,13 @@ use std::mem::{offset_of, size_of};
 use super::symbols::Symbols;
 use super::types::{
     CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TooltipState,
-    TranslationInfo, Wall,
+    TranslationInfo, WallSample,
 };
 use crate::{Result, log};
 
-/// Game function addresses and data locations.
-#[derive(Clone, Copy, Debug)]
+/// Game function addresses and data locations. A binding the features use can't be missing: if it
+/// isn't found, the mod doesn't start. One no feature uses is `Optional`.
+#[derive(Clone, Debug)]
 pub struct Bindings {
     pub render_game: usize,
     pub begin_trace_stage: usize,
@@ -28,7 +29,9 @@ pub struct Bindings {
     pub wall_map: usize,
     /// `draw_line(render_context*, real_2, real_2, float, real_4*)`, which shares its name with
     /// overloads.
-    pub draw_line: usize,
+    pub draw_line: Optional<usize>,
+    /// Whether `wall_t.flow` and `wall_t.air_dist` are where `WallSample` has them.
+    pub wall_extras: Optional<()>,
     /// `do_tooltip(render_context*, tooltip_t*, ...)`: draws the tooltip of a cell, mutation or body.
     pub do_tooltip: usize,
 
@@ -89,6 +92,35 @@ pub struct Bindings {
     pub input_mouse: usize,
 }
 
+/// A binding that no feature needs in order to run. If it can't be resolved, the mod still starts,
+/// and a feature that uses it is turned off when it does.
+#[derive(Clone, Debug)]
+pub struct Optional<T>(std::result::Result<T, String>);
+
+impl<T: Copy> Optional<T> {
+    fn new(name: &str, resolved: Result<T>) -> Self {
+        if let Err(error) = &resolved {
+            log::warn(&format!(
+                "{name} is unavailable; a feature that uses it will be turned off: {error}"
+            ));
+        }
+        Optional(resolved)
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.0.is_ok()
+    }
+
+    /// The resolved value. Panics if it couldn't be resolved, which turns off the feature that
+    /// called this (see `Feature`).
+    pub fn get(&self) -> T {
+        match &self.0 {
+            Ok(value) => *value,
+            Err(error) => panic!("{error}"),
+        }
+    }
+}
+
 /// Offsets of `bounding_box_2 { int_2 l, u; }` fields, relative to `world`.
 #[derive(Clone, Copy, Debug)]
 pub struct MapRange {
@@ -143,7 +175,8 @@ impl Bindings {
             draw_circles: symbols.address("draw_circles")?,
             draw_lines: symbols.address("draw_lines")?,
             wall_map: symbols.address("wall_map")?,
-            draw_line: symbols.function("draw_line", 5)?,
+            draw_line: Optional::new("draw_line", symbols.function("draw_line", 5)),
+            wall_extras: Optional::new("wall_t.flow and air_dist", verify_wall_extras(symbols)),
             do_tooltip: symbols.function("do_tooltip", 9)?,
 
             world: symbols.address("w")?,
@@ -218,10 +251,12 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && line.offset("r")? == offset_of!(LineRenderInfo, r)
         && line.offset("color")? == offset_of!(LineRenderInfo, color);
     expect(matches, "line_render_info layout changed")?;
+    // `wall_map` returns the whole struct, so its size must match; the fields are checked here as
+    // far as the features need them.
     let wall = symbols.layout("wall_t")?;
-    let matches = wall.size == size_of::<Wall>()
-        && wall.offset("dist")? == offset_of!(Wall, dist)
-        && wall.offset("gradient")? == offset_of!(Wall, gradient);
+    let matches = wall.size == size_of::<WallSample>()
+        && wall.offset("dist")? == offset_of!(WallSample, dist)
+        && wall.offset("gradient")? == offset_of!(WallSample, gradient);
     expect(matches, "wall_t layout changed")?;
     let tooltip = symbols.layout("tooltip_t")?;
     let matches = tooltip.size == size_of::<TooltipState>()
@@ -255,6 +290,14 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
     Ok(())
 }
 
+/// The fields of `wall_t` no feature reads.
+fn verify_wall_extras(symbols: &Symbols) -> Result<()> {
+    let wall = symbols.layout("wall_t")?;
+    let matches = wall.offset("flow")? == offset_of!(WallSample, flow)
+        && wall.offset("air_dist")? == offset_of!(WallSample, air_dist);
+    expect(matches, "wall_t.flow or air_dist moved")
+}
+
 fn expect_size(symbols: &Symbols, variable: &str, size: usize) -> Result<()> {
     let actual = symbols.variable_size(variable)?;
     expect(
@@ -278,6 +321,18 @@ mod tests {
     use windows_sys::Win32::System::LibraryLoader::{
         LOAD_LIBRARY_AS_IMAGE_RESOURCE, LoadLibraryExW,
     };
+
+    #[test]
+    fn a_missing_optional_binding_panics_only_when_used() {
+        let missing: Optional<usize> = Optional(Err("draw_line is gone".into()));
+        assert!(!missing.is_available());
+        let panic = std::panic::catch_unwind(|| missing.get()).unwrap_err();
+        assert_eq!(
+            panic.downcast_ref::<String>().map(String::as_str),
+            Some("draw_line is gone")
+        );
+        assert_eq!(Optional(Ok(7)).get(), 7);
+    }
 
     /// Resolves the bindings against a real game install, mapping the executable as an image (nothing
     /// in it runs). Run with:
@@ -313,6 +368,7 @@ mod tests {
             let bindings = Bindings::resolve(&symbols).unwrap();
             println!("{exe}: base {base:#x}\n{bindings:#x?}");
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
+            assert!(bindings.draw_line.is_available() && bindings.wall_extras.is_available());
             let pickup = symbols.layout("cell_pickup").unwrap();
             assert!(
                 pickup.offset_of::<f64>("alpha").is_err(),

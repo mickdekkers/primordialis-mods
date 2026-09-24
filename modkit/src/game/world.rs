@@ -2,7 +2,7 @@
 
 use std::ffi::c_void;
 
-use super::types::{Real2, Wall};
+use super::types::{Real2, Wall, WallSample};
 use super::{Game, read, write};
 
 /// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r).
@@ -11,7 +11,7 @@ const HEX_ROW_HEIGHT: f32 = 173.205_08;
 
 /// `wall_t wall_map(map_t*, real_2, bool)`. The 24-byte `wall_t` is returned through a hidden pointer
 /// argument, which Rust does as well for this signature.
-type WallMap = unsafe extern "C" fn(*const c_void, Real2, bool) -> Wall;
+type WallMap = unsafe extern "C" fn(*const c_void, Real2, bool) -> WallSample;
 
 /// The game's array of cell pickups (`w.cell_pickups`).
 #[derive(Clone, Copy)]
@@ -221,7 +221,8 @@ impl<'a> Map<'a> {
         // SAFETY: The game's `wall_map` with its `w.map`; `true` is what the pickup physics passes.
         unsafe {
             let wall_map: WallMap = std::mem::transmute(bindings.wall_map);
-            wall_map((bindings.world + bindings.map) as *const c_void, pos, true)
+            let sample = wall_map((bindings.world + bindings.map) as *const c_void, pos, true);
+            Wall::new(sample, bindings.wall_extras.is_available())
         }
     }
 }

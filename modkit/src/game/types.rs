@@ -131,14 +131,55 @@ pub(crate) struct TranslationInfo {
     pub combine_material_index: i32,
 }
 
-/// The game's `wall_t`: a sample of the wall distance field.
+/// The game's `wall_t`, as `wall_map` returns it.
 #[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WallSample {
+    pub dist: f32,
+    pub gradient: Real2,
+    pub flow: Real2,
+    pub air_dist: f32,
+}
+
+/// A sample of the wall distance field (the game's `wall_t`).
 #[derive(Clone, Copy, Debug)]
 pub struct Wall {
     /// Distance to the nearest wall surface: negative inside a wall.
     pub dist: f32,
     /// Unit direction away from the wall.
     pub gradient: Real2,
-    pub flow: Real2,
-    pub air_dist: f32,
+    flow: Real2,
+    air_dist: f32,
+    /// Whether `flow` and `air_dist` were found where they're expected (see `Bindings::wall_extras`).
+    extras: bool,
+}
+
+impl Wall {
+    pub(crate) fn new(sample: WallSample, extras: bool) -> Self {
+        Wall {
+            dist: sample.dist,
+            gradient: sample.gradient,
+            flow: sample.flow,
+            air_dist: sample.air_dist,
+            extras,
+        }
+    }
+
+    /// Panics if this game version has it elsewhere, which turns off the feature that called it.
+    pub fn flow(&self) -> Real2 {
+        self.extra(self.flow)
+    }
+
+    /// Panics if this game version has it elsewhere, which turns off the feature that called it.
+    pub fn air_dist(&self) -> f32 {
+        self.extra(self.air_dist)
+    }
+
+    fn extra<T>(&self, value: T) -> T {
+        assert!(
+            self.extras,
+            "wall_t.flow and air_dist moved in this game version (see the log)"
+        );
+        value
+    }
 }

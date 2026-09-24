@@ -61,13 +61,18 @@ impl Features {
                 continue;
             }
             let feature = &mut **feature;
-            if panic::catch_unwind(AssertUnwindSafe(|| f(feature))).is_ok() {
+            let Err(panic) = panic::catch_unwind(AssertUnwindSafe(|| f(feature))) else {
                 continue;
-            }
+            };
             *on = false;
             let reverted = panic::catch_unwind(AssertUnwindSafe(|| revert(feature))).is_ok();
+            let message = panic
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("no message");
             log::error(&format!(
-                "{} panicked, and is off until the mod is reloaded{}",
+                "{} panicked ({message}), and is off until the mod is reloaded{}",
                 feature.name(),
                 if reverted {
                     ""
