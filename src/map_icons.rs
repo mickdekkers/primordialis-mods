@@ -655,3 +655,137 @@ fn lerp_f32(a: f32, b: f32, t: f32) -> f32 {
 fn distance(a: Real2, b: Real2) -> f32 {
     (a.x - b.x).hypot(a.y - b.y)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::f32::consts::TAU;
+
+    fn eased(ticks: f32, time_constant: f32) -> f32 {
+        (-ticks / time_constant).exp()
+    }
+
+    #[test]
+    fn fades_ease_exponentially_with_ticks() {
+        let id = PickupsId::for_tests(0x1000, 3);
+        let mut fades = Fades::default();
+        fades.begin(id, 3);
+        fades.set_target(1, 0.0, 10.0);
+        fades.ease(100);
+        assert_eq!(fades.get(1), 1.0, "no time has passed on the first frame");
+
+        fades.begin(id, 3);
+        fades.set_target(1, 0.0, 10.0);
+        fades.ease(110);
+        assert!((fades.get(1) - eased(10.0, 10.0)).abs() < 1e-6);
+        assert_eq!(fades.get(0), 1.0, "the others stay at full opacity");
+        assert_eq!(fades.get(7), 1.0, "unknown pickups are opaque");
+    }
+
+    #[test]
+    fn fades_skip_at_most_half_a_second() {
+        let id = PickupsId::for_tests(0x1000, 1);
+        let mut fades = Fades::default();
+        let frame = |fades: &mut Fades, frame_number: i32| {
+            fades.begin(id, 1);
+            fades.set_target(0, 0.0, 60.0);
+            fades.ease(frame_number);
+        };
+        frame(&mut fades, 0);
+        frame(&mut fades, 100_000);
+        assert!((fades.get(0) - eased(60.0, 60.0)).abs() < 1e-6);
+        frame(&mut fades, 50_000);
+        assert!(
+            (fades.get(0) - eased(60.0, 60.0)).abs() < 1e-6,
+            "going back in time changes nothing"
+        );
+        frame(&mut fades, i32::MAX);
+        let before = fades.get(0);
+        frame(&mut fades, i32::MIN.wrapping_add(59));
+        assert!(
+            (fades.get(0) - before * eased(60.0, 60.0)).abs() < 1e-6,
+            "the frame number wraps around"
+        );
+    }
+
+    #[test]
+    fn fades_start_over_for_another_pickup_array() {
+        let (a, b) = (
+            PickupsId::for_tests(0x1000, 2),
+            PickupsId::for_tests(0x2000, 2),
+        );
+        let mut fades = Fades::default();
+        for frame_number in [0, 60] {
+            fades.begin(a, 2);
+            fades.set_target(0, 0.5, 1.0);
+            fades.ease(frame_number);
+        }
+        assert!((fades.get(0) - 0.5).abs() < 1e-3);
+        fades.begin(b, 2);
+        assert_eq!(fades.get(0), 1.0);
+    }
+
+    #[test]
+    fn dashed_lines_start_with_a_dash_and_stay_on_the_line() {
+        let (from, to, radius) = (Real2::new(1.0, 2.0), Real2::new(11.0, 2.0), 1.0);
+        let mut lines = Vec::new();
+        dashed_line(&mut lines, from, to, radius, [1.0; 4]);
+        let period = (DASH_LENGTH + DASH_GAP) * radius;
+        assert_eq!(lines.len(), (10.0 / period).ceil() as usize);
+        assert!(lines[0].start().same_bits(from));
+        for (k, line) in lines.iter().enumerate() {
+            assert!((line.start().x - (from.x + k as f32 * period)).abs() < 1e-4);
+            // Round caps stick out half the width at both ends, within the dash length.
+            let drawn = line.end().x - line.start().x + line.width();
+            assert!(drawn <= DASH_LENGTH * radius + 1e-4, "{k}: {drawn}");
+            assert!(line.end().x <= to.x + 1e-4 && line.start().y == 2.0);
+            assert!((line.width() - LEADER_WIDTH * radius).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn dashed_lines_of_no_length_have_no_dashes() {
+        let mut lines = Vec::new();
+        let at = Real2::new(3.0, 4.0);
+        dashed_line(&mut lines, at, at, 1.0, [1.0; 4]);
+        dashed_line(&mut lines, at, Real2::new(f32::NAN, 0.0), 1.0, [1.0; 4]);
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn the_halo_rings_the_icon_and_spins_clockwise() {
+        let center = Real2::new(10.0, -5.0);
+        let mut circles = Vec::new();
+        Halo::new(0, 2.0).add(&mut circles, center, 0.5);
+        assert_eq!(circles.len(), HALO_DOTS);
+        for circle in &circles {
+            let offset = Real2::new(circle.x[0] - center.x, circle.x[1] - center.y);
+            assert!((offset.x.hypot(offset.y) - HALO_RADIUS * 2.0).abs() < 1e-4);
+            assert!((circle.r - HALO_DOT_RADIUS * 2.0).abs() < 1e-6);
+            assert_eq!(circle.color[3], 0.5);
+        }
+        assert!((circles[0].x[0] - center.x - HALO_RADIUS * 2.0).abs() < 1e-4);
+
+        circles.clear();
+        Halo::new(10, 2.0).add(&mut circles, center, 0.5);
+        assert!(circles[0].x[1] < center.y, "the first dot turned clockwise");
+    }
+
+    #[test]
+    fn combo_colors_cycle_within_the_games_range() {
+        let period = TAU / COMBO_SPEED;
+        for frame_number in (0..2000).step_by(7) {
+            let color = combo_color(frame_number);
+            for channel in color {
+                assert!(
+                    (COMBO_BASE - COMBO_AMPLITUDE - 1e-6..=COMBO_BASE + COMBO_AMPLITUDE + 1e-6)
+                        .contains(&channel)
+                );
+            }
+        }
+        let red = combo_color(0)[0];
+        assert!((red - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-6);
+        let half_cycle = combo_color((period / 2.0).round() as i32)[0];
+        assert!((half_cycle - (COMBO_BASE - COMBO_AMPLITUDE)).abs() < 1e-4);
+    }
+}

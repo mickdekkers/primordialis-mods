@@ -66,3 +66,51 @@ impl GridPickups {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(grid: &GridPickups, pickups: PickupsId) -> Vec<usize> {
+        let mut read = None;
+        grid.read(pickups, |indices| read = Some(indices.to_vec()));
+        read.expect("read calls its function")
+    }
+
+    #[test]
+    fn reads_the_sorted_pickups_of_the_same_array_only() {
+        let (a, b) = (
+            PickupsId::for_tests(0x1000, 10),
+            PickupsId::for_tests(0x1000, 11),
+        );
+        let grid = GridPickups::default();
+        assert_eq!(read(&grid, a), [] as [usize; 0]);
+        grid.set(a, [7, 2, 5].into_iter());
+        assert_eq!(read(&grid, a), [2, 5, 7]);
+        assert_eq!(read(&grid, b), [] as [usize; 0]);
+        grid.clear();
+        assert_eq!(read(&grid, a), [] as [usize; 0]);
+    }
+
+    #[test]
+    fn a_nested_read_sees_no_pickups_instead_of_waiting() {
+        let a = PickupsId::for_tests(0x1000, 10);
+        let grid = GridPickups::default();
+        grid.set(a, [1].into_iter());
+        let mut nested = None;
+        grid.read(a, |_| nested = Some(read(&grid, a)));
+        assert_eq!(nested, Some(vec![]));
+    }
+
+    #[test]
+    fn keeps_working_after_a_panic_while_locked() {
+        let a = PickupsId::for_tests(0x1000, 10);
+        let grid = GridPickups::default();
+        grid.set(a, [3].into_iter());
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            grid.read(a, |_| panic!("a feature panics"));
+        }));
+        assert!(panicked.is_err());
+        assert_eq!(read(&grid, a), [3]);
+    }
+}

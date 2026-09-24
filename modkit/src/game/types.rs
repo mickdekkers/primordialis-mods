@@ -84,6 +84,22 @@ impl LineRenderInfo {
             color,
         }
     }
+
+    pub fn start(&self) -> Real2 {
+        Real2::new(self.x[0], self.x[1])
+    }
+
+    pub fn end(&self) -> Real2 {
+        Real2::new(self.x[0] + self.d[0], self.x[1] + self.d[1])
+    }
+
+    pub fn width(&self) -> f32 {
+        self.r * 2.0
+    }
+
+    pub fn color(&self) -> [f32; 4] {
+        self.color
+    }
 }
 
 /// The game's `tooltip_t`: a tooltip that its `do_tooltip` draws and animates from frame to frame.

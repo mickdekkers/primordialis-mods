@@ -29,6 +29,15 @@ pub struct PickupsId {
     len: usize,
 }
 
+impl PickupsId {
+    /// An id that no pickup array has to have, for tests. Ids are only ever compared, so any value
+    /// is harmless.
+    #[doc(hidden)]
+    pub const fn for_tests(address: usize, len: usize) -> Self {
+        PickupsId { address, len }
+    }
+}
+
 impl<'a> Pickups<'a> {
     pub(super) fn new(game: Game<'a>, address: usize, count: i32) -> Self {
         let len = if address == 0 {
