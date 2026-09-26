@@ -126,15 +126,17 @@ impl MapIcons {
         let game = frame.game();
         self.settled.refresh(game);
         self.found.update(game);
-        if !game.map_open() {
+        let camera = frame.camera();
+        let units_per_half_screen = camera
+            .world_units_per_half_screen()
+            .filter(|_| game.map_open());
+        let Some(units_per_half_screen) = units_per_half_screen else {
+            // Closed, or no camera to draw with: nothing is on a grid or pointed at, so that the other
+            // features don't keep hiding pickups.
             self.spread.close_now();
             self.grid.clear();
             self.fades.clear();
             self.tooltip.hide();
-            return;
-        }
-        let camera = frame.camera();
-        let Some(units_per_half_screen) = camera.world_units_per_half_screen() else {
             return;
         };
         let radius = ICON_SCREEN_RADIUS * units_per_half_screen;
