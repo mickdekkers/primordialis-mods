@@ -93,35 +93,61 @@ These keep hooking and unloading safe while the game runs:
 - `cargo clippy --workspace --all-targets --release` should be clean.
 - Run `cargo fmt --all` before every commit. It uses rustfmt's defaults (there is no rustfmt
   config), and `cargo fmt --all --check` must be clean.
-- The Rust sources use LF line endings, and `README.md` uses CRLF. Scripted edits must keep each
-  file's line endings (in Python on Windows, open files with `newline=''`).
-- On this machine the game is installed at `G:\SteamLibrary\steamapps\common\Primordialis`. It comes
-  in AVX and SSE3 builds (`primordialis_avx.exe`, `primordialis_sse3.exe`).
-
-## Working with the user's running game
-
-- **The dev setup:** the Steam launch option points at `target\release\primordialis_qol_hot_reload.dll`.
-  The host loads copies of the mod from `target\release\hot_reload\` and swaps in each new build
-  about a second after `cargo build --release` finishes.
-- **Every build is a swap while the game runs.** Rebuilding the mod is always fine without asking:
-  that's how changes get tested live. Build once the edits are complete, so a half-done state isn't
-  swapped in. `cargo check`, `clippy` and `test` don't write the DLL.
-- **Ask before writing to the game's memory** (e.g. with a debugger).
+- The Rust sources and the other docs use LF line endings, and `README.md` uses CRLF. Scripted edits
+  must keep each file's line endings (in Python on Windows, open files with `newline=''`).
+- The game comes in AVX and SSE3 builds (`primordialis_avx.exe`, `primordialis_sse3.exe`).
 - **Logs** go next to the DLL: `primordialis_qol.log` for the mod, `primordialis_qol_hot_reload.log`
   for the host. Settings are in `primordialis_qol.toml`, symbols are cached in
   `primordialis_qol_cache/`.
-- **Screenshots:** only capture the game window when it's in the foreground, and only with the user's
-  consent.
+- With the hot reload host loaded (see `DEVELOPMENT.md`), every `cargo build --release` of the mod is
+  swapped into the running game, so build once the edits are complete. `cargo check`, `clippy` and
+  `test` don't write the DLL.
+
+## Docs
+
+- **`README.md` is for players, not programmers:** what the mod does and why, how to install it, and
+  whether it's safe. How things work goes in `DEVELOPMENT.md`. Keep the README's settings table in
+  line with the settings the features declare.
+- **`CHANGELOG.md`** has a `## <version>` section per release, written for players: the release
+  workflow uses it as the release notes.
+- **Screenshots** for the README go in `docs/screenshots/`, under the names the README links to.
+
+## Releasing
+
+- Pushing a `v<version>` tag runs `.github/workflows/release.yml`: it checks the tag against
+  `Cargo.toml` and `CHANGELOG.md`, builds and tests, scans the DLL on VirusTotal, and creates the
+  release (a draft if any engine flagged it). `DEVELOPMENT.md` has the steps.
+- Only `primordialis_qol.dll` (and a zip of its PDB) is released, never the hot reload host or injector.
+  Its file name is what players type in the launch option, so it never changes.
+- Release builds strip local paths with `--remap-path-prefix`, and `.github/scripts/check-paths.ps1`
+  fails the release unless every path in the DLL has an expected form (an allowlist, not a search for
+  known names). Local builds contain the home folder of whoever built them, so they are never
+  distributed.
+- `build.rs` embeds the DLL's version resource with `embed-resource` (which runs the SDK's `rc.exe`),
+  from the package's metadata and the copyright line in `LICENSE`.
+- **Committed files are for everyone:** assume other people read every one of them. No paths from this
+  machine, user names or emails, and no private notes to the maintainer either (setup reminders,
+  account or repository settings, to-dos). Those go in `CLAUDE.local.md`, which isn't committed.
+- Actions are pinned by commit SHA (with the version in a comment), and the Rust toolchain is pinned in
+  the workflows' `RUSTUP_TOOLCHAIN`. Update them deliberately, like dependencies.
+- CI checks the workflows with pinact (`.pinact.yaml`) and zizmor, downloaded by version and SHA-256
+  (in `ci.yml`). After editing a workflow, run `pinact run --check --verify-comment` and
+  `zizmor --persona=pedantic .` locally; zizmor's `auditor` persona should stay clean too.
+- Jobs that use secrets run in an environment (zizmor checks this). Every job gets the least
+  `permissions` it needs, with a comment saying why for anything beyond `contents: read`.
 
 ## Dependencies
 
-- **Approval:** the user approves every new crate, including every transitive dependency, *before*
-  it is downloaded. Don't write a crate yourself when a solid, well-regarded one exists, but propose
-  it for review first.
+- **Review:** every new crate, including every transitive dependency, is reviewed before it's added.
+  Prefer a solid, well-regarded crate to writing one yourself.
 - **Pins:** versions are pinned exactly in `[workspace.dependencies]` in the root `Cargo.toml`.
   Don't loosen them.
 - **Checking what a change pulls in:** preview it with `cargo update --workspace --dry-run`, and
   build with `--offline` to prove nothing new was fetched.
+- **Build dependencies count too:** `embed-resource` and its tree (including `cc`, `vswhom-sys`,
+  `winreg` and windows-sys 0.59) run on the build machine. `cc` and `find-msvc-tools` are held below
+  their newest releases in `Cargo.lock` (releases younger than 30 days aren't used yet), so
+  `cargo update` would move them.
 
 ## Style
 
