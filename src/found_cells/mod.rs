@@ -9,7 +9,7 @@ mod store;
 
 use std::time::{Duration, Instant};
 
-use modkit::game::{Game, Map, MapId, Pickups, PickupsId, Real2, SaveSlot};
+use modkit::game::{Game, Map, MapId, Pickup, Pickups, PickupsId, Real2, SaveSlot};
 use modkit::log;
 use rustc_hash::FxHashMap;
 
@@ -56,11 +56,24 @@ struct Tracked {
     cell: Cell,
 }
 
-/// A pickup a found cell may belong to, while matching them up.
+/// A pickup a found cell may belong to, while matching them up: what matching needs to know about
+/// it, as plain data.
+#[derive(Clone, Copy, Debug)]
 struct Candidate {
     index: usize,
     material: u32,
     position: Real2,
+}
+
+impl Candidate {
+    /// The pickup at `index`, if it gives a cell.
+    fn of(index: usize, pickup: &Pickup) -> Option<Self> {
+        Some(Candidate {
+            index,
+            material: pickup.material()?.id(),
+            position: pickup.position(),
+        })
+    }
 }
 
 /// The cells the player has found in the current run.
@@ -103,8 +116,13 @@ impl FoundCells {
         if self.world != Some(world) {
             self.switch_world(world);
         }
-        if self.pickups != Some(pickups.id()) || !self.follow(&pickups) {
-            self.rematch(&pickups);
+        let candidate = |index| Candidate::of(index, &pickups.get(index)?);
+        if self.pickups != Some(pickups.id()) || !self.follow(candidate) {
+            let candidates = pickups
+                .iter()
+                .enumerate()
+                .filter_map(|(index, pickup)| Candidate::of(index, &pickup));
+            self.rematch(pickups.id(), pickups.len(), candidates);
         }
         let loaded_long_ago = self
             .loaded
@@ -142,19 +160,17 @@ impl FoundCells {
         self.loaded = Some(Instant::now());
     }
 
-    /// Follows the found pickups, which only move a little from frame to frame. Returns false if one
-    /// isn't where it was: the pickups changed without the array changing.
-    fn follow(&mut self, pickups: &Pickups) -> bool {
+    /// Follows the found pickups, which only move a little from frame to frame. `pickup` gives the
+    /// pickup at an index, if there is one that gives a cell. Returns false if one isn't where it
+    /// was: the pickups changed without the array changing.
+    fn follow(&mut self, pickup: impl Fn(usize) -> Option<Candidate>) -> bool {
         for tracked in &mut self.tracked {
-            let Some(pickup) = pickups.get(tracked.index) else {
+            let Some(pickup) = pickup(tracked.index) else {
                 return false;
             };
-            let position = pickup.position();
+            let position = pickup.position;
             let moved = position.distance(to_real2(tracked.cell.position));
-            if pickup.material().map(|material| material.id()) != Some(tracked.cell.material)
-                || moved.is_nan()
-                || moved > MAX_STEP
-            {
+            if pickup.material != tracked.cell.material || moved.is_nan() || moved > MAX_STEP {
                 return false;
             }
             if moved > RESAVE_DISTANCE {
@@ -165,24 +181,23 @@ impl FoundCells {
         true
     }
 
-    /// Matches the found cells with the pickups, after the pickups changed. Cells whose pickups
-    /// disappeared were picked up (or merged), unless the whole world is being cleared.
-    fn rematch(&mut self, pickups: &Pickups) {
-        let shrunk = self.pickups_len.saturating_sub(pickups.len());
-        let clearing = pickups.is_empty() || shrunk > MAX_PICKED_AT_ONCE;
+    /// Matches the found cells with the pickups, after the pickups changed: the array `pickups`, of
+    /// `len` pickups, of which `candidates` give cells. Cells whose pickups disappeared were picked
+    /// up (or merged), unless the whole world is being cleared.
+    fn rematch(
+        &mut self,
+        pickups: PickupsId,
+        len: usize,
+        candidates: impl Iterator<Item = Candidate>,
+    ) {
+        let shrunk = self.pickups_len.saturating_sub(len);
+        let clearing = len == 0 || shrunk > MAX_PICKED_AT_ONCE;
         let mut squares: FxHashMap<(i32, i32), Vec<Candidate>> = FxHashMap::default();
-        for (index, pickup) in pickups.iter().enumerate() {
-            if let Some(material) = pickup.material() {
-                let position = pickup.position();
-                squares
-                    .entry(square_at(position))
-                    .or_default()
-                    .push(Candidate {
-                        index,
-                        material: material.id(),
-                        position,
-                    });
-            }
+        for candidate in candidates {
+            squares
+                .entry(square_at(candidate.position))
+                .or_default()
+                .push(candidate);
         }
         // Each found cell, whether it was tracked, and when it was found (to keep fading in).
         let found_at = std::mem::take(&mut self.indices);
@@ -191,8 +206,8 @@ impl FoundCells {
             (tracked.cell, true, at)
         });
         let pending = self.pending.drain(..).map(|cell| (cell, false, None));
-        let candidates: Vec<(Cell, bool, Option<i32>)> = tracked.chain(pending).collect();
-        for (cell, was_tracked, found_at) in candidates {
+        let cells: Vec<(Cell, bool, Option<i32>)> = tracked.chain(pending).collect();
+        for (cell, was_tracked, found_at) in cells {
             let at = to_real2(cell.position);
             let (x, y) = square_at(at);
             let nearest = (-1..=1)
@@ -220,8 +235,8 @@ impl FoundCells {
                 None => self.pending.push(cell),
             }
         }
-        self.pickups = Some(pickups.id());
-        self.pickups_len = pickups.len();
+        self.pickups = Some(pickups);
+        self.pickups_len = len;
     }
 
     /// Finds the cells the player is close enough to.
