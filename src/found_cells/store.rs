@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
+use std::time::Instant;
 
 use modkit::{log, storage};
 use serde::{Deserialize, Serialize};
@@ -55,6 +56,8 @@ pub struct Store {
     runs: Option<Vec<RunCells>>,
     /// Whether writing the file failed already, so that it's only logged once.
     warned: bool,
+    /// Whether how long saving takes was logged: once, since it's done on the render thread.
+    timed: bool,
 }
 
 impl Store {
@@ -80,6 +83,7 @@ impl Store {
         let Some(path) = storage::path(FILE) else {
             return false;
         };
+        let started = Instant::now();
         let contents = Contents {
             version: VERSION,
             runs: std::mem::take(self.runs()),
@@ -93,6 +97,14 @@ impl Store {
             Err(error) => Err(std::io::Error::other(error)),
         };
         match written {
+            Ok(()) if !self.timed => {
+                self.timed = true;
+                log::info(&format!(
+                    "saved the found cells in {:.1?}",
+                    started.elapsed()
+                ));
+                true
+            }
             Ok(()) => true,
             Err(error) => {
                 if !self.warned {
@@ -160,7 +172,7 @@ mod tests {
     fn empty() -> Store {
         Store {
             runs: Some(Vec::new()),
-            warned: false,
+            ..Store::default()
         }
     }
 

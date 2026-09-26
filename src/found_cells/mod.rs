@@ -39,8 +39,10 @@ const MAX_PICKED_AT_ONCE: usize = 16;
 const PENDING_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often the found cells are saved, at most, while they change.
 const SAVE_INTERVAL: Duration = Duration::from_secs(5);
-/// A found pickup that moves further than this is saved at its new position.
-const RESAVE_DISTANCE: f32 = 1.0;
+/// A found pickup that moves further than this is saved at its new position: well within
+/// `MATCH_DISTANCE`, so that it's still matched from the file, but far enough that pickups drifting
+/// around near the player don't have the file written every `SAVE_INTERVAL`.
+const RESAVE_DISTANCE: f32 = MATCH_DISTANCE / 5.0;
 
 /// How close the player has to get to a cell to find it, where the light is `light` and the player
 /// sees `vision` far (`Game::vision_radius`): that far at normal light and above, closing in to
