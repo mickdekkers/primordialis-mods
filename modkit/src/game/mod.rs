@@ -102,7 +102,7 @@ impl<'a> Game<'a> {
 
     /// The world's seed, which a saved run keeps. Runs can share one.
     pub fn seed(&self) -> u32 {
-        // SAFETY: `w.seed`, an unsigned int.
+        // SAFETY: `w.run.seed`, an unsigned int.
         unsafe { read(self.bindings.world + self.bindings.seed) }
     }
 

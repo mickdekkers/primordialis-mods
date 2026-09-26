@@ -60,7 +60,8 @@ pub struct Bindings {
     /// `w.vision_radius` (`float`): how far around `camera_pos` the fog of war clears on the map
     /// (`walls.glsl`), taken from the player's body.
     pub vision_radius: usize,
-    /// `w.seed` (`unsigned int`): the world's seed, which a saved run keeps.
+    /// `w.run.seed` (`unsigned int`): the seed the run's world was made from, saved with the run.
+    /// Not `w.seed`, which is the state of the game's random numbers and changes every step.
     pub seed: usize,
     /// `w.run.start_time` (`double`): when the run was started, a timestamp saved with the run.
     pub run_start_time: usize,
@@ -256,7 +257,8 @@ impl Bindings {
             frame_number: world.offset_of::<i32>("frame_number")?,
             camera_pos: world.offset_of::<Real2>("camera_pos")?,
             vision_radius: world.offset_of::<f32>("vision_radius")?,
-            seed: world.offset_of::<u32>("seed")?,
+            seed: world.offset_sized("run", run_stats.size)?
+                + run_stats.offset_of::<u32>("seed")?,
             run_start_time: world.offset_sized("run", run_stats.size)?
                 + run_stats.offset_of::<f64>("start_time")?,
             map_mode: world.flag("map_mode")?,
