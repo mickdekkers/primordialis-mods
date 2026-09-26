@@ -119,10 +119,11 @@ impl HideDuplicates {
 
     /// While the map is open and shows tooltips, keeps the game from drawing its tooltip for the
     /// pickup under the mouse in the world (it does in this stage) until `show_world_tooltip`: it
-    /// would show up on the map, next to the one for the icon under the mouse.
+    /// would show up on the map, next to the one for the icon under the mouse. Not if the map icons
+    /// were turned off: nothing would show a tooltip then.
     fn hide_world_tooltip(&mut self, game: &Game) {
         self.show_world_tooltip(game);
-        if !game.map_open() || !SHOW_TOOLTIPS.get() {
+        if !game.map_open() || !SHOW_TOOLTIPS.get() || self.grid.is_withdrawn() {
             return;
         }
         let tooltip = game.world_tooltip();

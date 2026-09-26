@@ -48,6 +48,12 @@ impl GridPickups {
         self.0.withdrawn.store(true, Ordering::Relaxed);
     }
 
+    /// Whether the map icons stopped (see `withdraw`), so that nothing on the map stands in for what
+    /// the other features would hide.
+    pub fn is_withdrawn(&self) -> bool {
+        self.0.withdrawn.load(Ordering::Relaxed)
+    }
+
     /// No pickups are on a grid.
     pub fn clear(&self) {
         self.with(|snapshot| {
@@ -118,8 +124,10 @@ mod tests {
         let grid = GridPickups::default();
         grid.set(a, [4].into_iter());
         grid.clone().withdraw();
+        assert!(grid.is_withdrawn());
         assert_eq!(read(&grid, a), [] as [usize; 0]);
         grid.set(a, [5].into_iter());
+        assert!(!grid.is_withdrawn());
         assert_eq!(read(&grid, a), [5]);
     }
 
