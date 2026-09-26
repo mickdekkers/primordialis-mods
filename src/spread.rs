@@ -818,6 +818,76 @@ mod tests {
         check(&grid, &positions, 1.6);
     }
 
+    /// Three icons piled up at the origin.
+    const PILE: [Real2; 3] = [
+        Real2::new(0.0, 0.0),
+        Real2::new(0.1, 0.0),
+        Real2::new(0.0, 0.1),
+    ];
+
+    #[test]
+    fn a_pile_spreads_out_under_the_mouse_and_collapses_once_it_leaves() {
+        let id = PickupsId::for_tests(0x1000, 3);
+        let pickups = [0, 1, 2];
+        let mut spread = Spread::default();
+        let mut update = |mouse: Real2, frame_number: i32| {
+            spread.update(id, &pickups, &PILE, 1.0, Some(mouse), frame_number);
+            spread
+                .moved()
+                .iter()
+                .map(|m| m.progress)
+                .collect::<Vec<_>>()
+        };
+        let (over, away) = (PILE[0], Real2::new(100.0, 0.0));
+        assert_eq!(update(over, 0), [0.0; 3], "no time has passed");
+        let halfway = update(over, OPEN_TICKS as i32 / 2);
+        assert!(halfway.iter().all(|&p| p > 0.0 && p < 1.0), "{halfway:?}");
+        assert_eq!(update(over, OPEN_TICKS as i32), [1.0; 3]);
+
+        let closing = update(away, (OPEN_TICKS + CLOSE_TICKS / 2.0) as i32);
+        assert!(closing.iter().all(|&p| p > 0.0 && p < 1.0), "{closing:?}");
+        assert!(update(away, (OPEN_TICKS + CLOSE_TICKS) as i32).is_empty());
+        assert!(spread.grid.is_none(), "a collapsed grid is gone");
+    }
+
+    #[test]
+    fn a_new_pickup_array_collapses_the_grid_at_once() {
+        let pickups = [0, 1, 2];
+        let mut spread = Spread::default();
+        let id = PickupsId::for_tests(0x1000, 3);
+        spread.update(id, &pickups, &PILE, 1.0, Some(PILE[0]), 0);
+        spread.update(id, &pickups, &PILE, 1.0, Some(PILE[0]), 30);
+        assert_eq!(spread.moved().len(), 3);
+        let other = PickupsId::for_tests(0x2000, 3);
+        spread.update(other, &pickups, &PILE, 1.0, None, 31);
+        assert!(spread.moved().is_empty() && spread.grid.is_none());
+    }
+
+    #[test]
+    fn pointing_at_another_pile_replaces_the_grid_at_once() {
+        let far = Real2::new(50.0, 0.0);
+        let mut positions = PILE.to_vec();
+        positions.extend(PILE.iter().map(|p| Real2::new(p.x + far.x, p.y + far.y)));
+        positions.push(Real2::new(-50.0, 0.0));
+        let pickups: Vec<usize> = (0..positions.len()).collect();
+        let id = PickupsId::for_tests(0x1000, positions.len());
+        let mut spread = Spread::default();
+        let on_grid = |spread: &Spread| {
+            let mut icons: Vec<usize> = spread.moved().iter().map(|m| m.icon).collect();
+            icons.sort_unstable();
+            icons
+        };
+        spread.update(id, &pickups, &positions, 1.0, Some(PILE[0]), 0);
+        assert_eq!(on_grid(&spread), [0, 1, 2]);
+        spread.update(id, &pickups, &positions, 1.0, Some(far), 1);
+        assert_eq!(on_grid(&spread), [3, 4, 5]);
+        spread.update(id, &pickups, &positions, 1.0, Some(positions[6]), 2);
+        assert!(
+            spread.moved().iter().all(|m| m.icon != 6),
+            "a lone icon makes no grid"
+        );
+    }
+
     #[test]
     fn every_icon_of_a_huge_pile_joins() {
         // Thousands of icons on top of each other, as when zoomed all the way out.
