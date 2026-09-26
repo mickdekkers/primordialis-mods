@@ -64,8 +64,8 @@ information it reads from the game.
 ## Is it safe?
 
 - **Your game files and saves are left alone.** The mod loads through `--customdll`, the game's own
-  option for loading mods, and doesn't change any game files. It only writes its own settings, log and
-  cache. Remove the launch option and the game is exactly as it was.
+  option for loading mods, and doesn't change any game files. It only writes its own files: settings,
+  log, the cells you've found, and cache. Remove the launch option and the game is exactly as it was.
 - **It only changes what you see.** It draws on the map and in the menus, and doesn't change how the
   game plays.
 - **It never goes online.**
