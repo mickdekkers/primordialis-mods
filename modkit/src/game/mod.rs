@@ -9,20 +9,22 @@
 //! nothing here depends on how the mod is loaded or hooked.
 
 pub(crate) mod bindings;
+pub(crate) mod menu;
 mod pdb;
 mod render;
 pub(crate) mod symbols;
 mod tooltip;
-mod types;
+pub(crate) mod types;
 mod world;
 
 use std::marker::PhantomData;
 use std::ptr;
 
+pub use menu::MenuButton;
 pub use render::{Camera, Frame, Stage};
 pub use tooltip::{PickupTooltip, WorldTooltip};
 pub use types::{CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, Wall};
-pub use world::{Map, Material, Pickup, Pickups, PickupsId};
+pub use world::{Map, MapId, Material, Pickup, Pickups, PickupsId};
 
 use bindings::Bindings;
 
@@ -58,7 +60,7 @@ impl<'a> Game<'a> {
         }
     }
 
-    /// The world map: which areas are explored, and the walls.
+    /// The world map: its light, and the walls.
     pub fn map(&self) -> Map<'a> {
         Map::new(*self)
     }
@@ -83,12 +85,63 @@ impl<'a> Game<'a> {
         unsafe { read::<u32>(self.bindings.world + offset) & (1 << bit) != 0 }
     }
 
+    /// Where the game's camera is centered in the world. It follows the player (not the map screen's
+    /// view), and the map is explored around it.
+    pub fn view_center(&self) -> Real2 {
+        // SAFETY: `w.camera_pos`, a `real_2`.
+        unsafe { read(self.bindings.world + self.bindings.camera_pos) }
+    }
+
+    /// How far around `view_center` the player can see, in world units: the map's fog of war is clear
+    /// within 80% of it and closes in by 100% (`walls.glsl`). It's the player's body's, so it can
+    /// change during a run.
+    pub fn vision_radius(&self) -> f32 {
+        // SAFETY: `w.vision_radius`, a float.
+        unsafe { read(self.bindings.world + self.bindings.vision_radius) }
+    }
+
+    /// The world's seed, which a saved run keeps. Runs can share one.
+    pub fn seed(&self) -> u32 {
+        // SAFETY: `w.seed`, an unsigned int.
+        unsafe { read(self.bindings.world + self.bindings.seed) }
+    }
+
+    /// When the current run was started, as a timestamp the game saves with it: with the seed, it
+    /// tells runs apart across game sessions, even ones started from the same seed.
+    pub fn run_started_at(&self) -> f64 {
+        // SAFETY: `w.run.start_time`, a double.
+        unsafe { read(self.bindings.world + self.bindings.run_start_time) }
+    }
+
+    /// Which of the game's saves the current run is kept in: a normal run and a sandbox each have
+    /// their own. `None` before a run is started or loaded, or if this version of the game doesn't
+    /// have it as expected.
+    pub fn save_slot(&self) -> Option<SaveSlot> {
+        let slots = self.bindings.save_slots.ok()?;
+        // SAFETY: `saver.save_dir`, a `char*`, only compared with the folders it can point at.
+        let dir: usize = unsafe { read(slots.saver + slots.save_dir) };
+        if dir == slots.saver + slots.normal_save_dir {
+            Some(SaveSlot::Normal)
+        } else if dir == slots.saver + slots.sandbox_save_dir {
+            Some(SaveSlot::Sandbox)
+        } else {
+            None
+        }
+    }
+
     /// The game's `w.frame_number`. Despite the name, it counts simulation steps, which run at a
     /// fixed 120 per second regardless of frame rate, so it's a good clock for animations.
     pub fn frame_number(&self) -> i32 {
         // SAFETY: `w.frame_number`, an int.
         unsafe { read(self.bindings.world + self.bindings.frame_number) }
     }
+}
+
+/// One of the game's saves. It keeps one run of each kind, separately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveSlot {
+    Normal,
+    Sandbox,
 }
 
 /// Reads a value of type `T` from game memory.

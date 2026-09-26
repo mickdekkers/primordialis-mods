@@ -16,7 +16,7 @@ use windows_sys::core::BOOL;
 use crate::feature::{Feature, Features};
 use crate::game::bindings::Bindings;
 use crate::game::symbols;
-use crate::{Result, alloc, events, log, module, settings};
+use crate::{Result, alloc, events, log, module, settings, storage};
 
 /// A mod: what `entry!` is given.
 pub struct Mod {
@@ -105,6 +105,7 @@ fn prepare_in(definition: &Mod, home: &Path, append_log: bool) -> Result<Prepare
         definition.version,
         location.as_deref().unwrap_or("an unknown location")
     ));
+    storage::init(home, definition.name);
     let features = (definition.features)();
     let declared = features
         .iter()

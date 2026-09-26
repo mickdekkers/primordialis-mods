@@ -39,6 +39,16 @@ impl Real2 {
     }
 }
 
+/// The game's `real_3`. Its UI functions take positions as one, with a `z` that orders what's drawn
+/// over what.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Real3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
 /// The game's `real_4x4`. The game uploads these with `transpose = GL_TRUE`, so they are stored
 /// row-major: element (row, column) is `data[row * 4 + column]`.
 #[repr(C)]

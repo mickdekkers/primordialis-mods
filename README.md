@@ -3,13 +3,17 @@
 A small quality-of-life mod for Primordialis: open the map and see *which* cells are lying around, not
 just where you've been.
 
-![The map, with an icon for every cell pickup in the explored areas](docs/screenshots/map-icons.png)
+![The map, with an icon for every cell pickup you've seen](docs/screenshots/map-icons.png)
 
 ## What it does
 
-**See every cell on the map.** Each cell pickup in an area you've explored shows up on the map with
-its own icon, drawn just like the pickup looks in the world. Combo cells get their shifting colors and
-a ring of rainbow dots, like the sparkle around them in the world.
+**See every cell on the map.** Each cell pickup you've seen shows up on the map with its own icon,
+drawn just like the pickup looks in the world. Combo cells get their shifting colors and a ring of
+rainbow dots, like the sparkle around them in the world.
+
+**Only what you've seen.** A cell shows up once you've been close enough to see it: as far as the fog
+clears around you, and closer the darker it is, so dark areas, meant to be searched with a light cell,
+keep their secrets. Cells you've seen stay on the map, also after restarting the game.
 
 **Tell piles apart.** Where icons overlap, point at them and they spread out, with a line back to where
 each one really is.
@@ -47,20 +51,23 @@ it feels like part of the game.
    ```
    --customdll "primordialis_qol.dll"
    ```
-4. Start the game, explore a bit, and open the map.
+4. Start the game. The main menu shows the mod's version under the game's, in the bottom-left
+   corner, so you can tell it's loaded. Explore a bit, and open the map.
 
 To update, close the game and replace `primordialis_qol.dll` with the new one.
 
 The mod keeps a few files of its own in the game folder: its settings (`primordialis_qol.toml`), a log
-(`primordialis_qol.log`), and a `primordialis_qol_cache` folder (about 10 MB) with the debug information
-it reads from the game.
+(`primordialis_qol.log`), the cells you've found in your current run and sandbox
+(`primordialis_qol_detected.bin`), and a `primordialis_qol_cache` folder (about 10 MB) with the debug
+information it reads from the game.
 
 ## Is it safe?
 
 - **Your game files and saves are left alone.** The mod loads through `--customdll`, the game's own
   option for loading mods, and doesn't change any game files. It only writes its own settings, log and
   cache. Remove the launch option and the game is exactly as it was.
-- **It only changes what you see.** It draws on the map, and doesn't change how the game plays.
+- **It only changes what you see.** It draws on the map and in the menus, and doesn't change how the
+  game plays.
 - **It never goes online.**
 - **It steps aside when something is wrong.** If a game update changes something the mod relies on, the
   mod turns itself off and the game runs normally. If one of its features runs into a problem, that
@@ -87,8 +94,12 @@ by default.
 
 ## Troubleshooting
 
-**Nothing changed on the map.** Icons only show for areas you've explored, so explore a little first.
-If there are still none, look for `primordialis_qol.log` in the game folder:
+**Nothing changed on the map.** Icons only show for the cells you've been close enough to see, so
+move around a little first.
+
+If there are still none, look at the bottom-left corner of the main menu: with the mod loaded, it shows
+"QoL mod" and its version under the game's version. If it doesn't, look for `primordialis_qol.log`
+in the game folder:
 
 - **There's no log:** the game didn't load the mod. Check that `primordialis_qol.dll` is right next to
   `primordialis.exe`, and that the launch option is exactly as above, quotes included.
@@ -101,7 +112,8 @@ shows where your game is installed, but nothing else about you or your PC.
 ## Uninstall
 
 Remove the launch option. You can then delete `primordialis_qol.dll`, `primordialis_qol.toml`,
-`primordialis_qol.log` and the `primordialis_qol_cache` folder from the game folder.
+`primordialis_qol.log`, `primordialis_qol_detected.bin` and the `primordialis_qol_cache` folder from
+the game folder.
 
 ## Compatibility
 

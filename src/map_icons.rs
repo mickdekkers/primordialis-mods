@@ -1,4 +1,4 @@
-//! Draws the icon of every cell pickup in explored areas while the map is open, using the game's own
+//! Draws the icon of every cell pickup the player has found while the map is open, using the game's own
 //! icon renderer, so the icons look exactly like the ones on pickups in the world. Combo pickups also
 //! get a ring of rainbow dots, standing in for the particle ring the game shows around them in the
 //! world, which only exists near the player.
@@ -15,6 +15,7 @@ use modkit::settings::{Setting, Toggle};
 
 use crate::combo::{HALO_ALPHA, Halo, combo_color};
 use crate::fades::Fades;
+use crate::found_cells::FoundCells;
 use crate::grid_pickups::GridPickups;
 use crate::leaders::Leader;
 use crate::math;
@@ -45,11 +46,6 @@ pub(crate) static SHOW_TOOLTIPS: Toggle = Toggle::new(
 /// Icon radius as a fraction of half the screen height, so icons keep the same on-screen size at any
 /// map zoom level.
 const ICON_SCREEN_RADIUS: f32 = 0.0385;
-/// A map hex's `explored` value rises from 0 to 1 as you see it, and the map shades the hex by it.
-/// Pickups in hexes below the minimum are hidden; between minimum and full, their icons fade in. Our
-/// choice, tuned by eye: the game has no such threshold.
-const EXPLORED_MIN: f32 = 0.3;
-const EXPLORED_FULL: f32 = 0.6;
 
 /// The icon under the mouse is drawn this much larger.
 const HOVER_SCALE: f32 = 1.15;
@@ -71,6 +67,8 @@ pub struct MapIcons {
     circles: Vec<CircleRenderInfo>,
     lines: Vec<LineRenderInfo>,
     settled: SettledPositions,
+    /// The cells the player has been close enough to find.
+    found: FoundCells,
     spread: Spread,
     /// The pickups on the grid, shared with the features that hide them elsewhere.
     grid: GridPickups,
@@ -127,6 +125,7 @@ impl MapIcons {
     fn draw(&mut self, frame: &Frame) {
         let game = frame.game();
         self.settled.refresh(game);
+        self.found.update(game);
         if !game.map_open() {
             self.spread.close_now();
             self.grid.clear();
@@ -172,8 +171,8 @@ impl MapIcons {
         if !self.logged_first_draw {
             self.logged_first_draw = true;
             log::info(&format!(
-                "first map draw: {} of {} pickups in explored areas ({} combo, \
-                 {moved_out_of_walls} moved out of walls), icon radius {radius:.1} world units",
+                "first map draw: {} of {} pickups found ({} combo, {moved_out_of_walls} moved out \
+                 of walls), icon radius {radius:.1} world units",
                 self.icons.len(),
                 pickups.len(),
                 self.looks.iter().filter(|look| look.is_combo).count(),
@@ -201,7 +200,8 @@ impl MapIcons {
     /// out of walls.
     fn collect(&mut self, game: &Game) -> usize {
         let fade = game.map_fade();
-        let combo_rgb = combo_color(game.frame_number());
+        let frame_number = game.frame_number();
+        let combo_rgb = combo_color(frame_number);
         let (pickups, map) = (game.pickups(), game.map());
         let fix_positions = FIX_ICON_POSITIONS.get();
         self.pickups.clear();
@@ -209,6 +209,9 @@ impl MapIcons {
         self.looks.clear();
         let mut moved = 0;
         for (index, pickup) in pickups.iter().enumerate() {
+            let Some(found) = self.found.alpha(index, frame_number) else {
+                continue;
+            };
             let Some(material) = pickup.material() else {
                 continue;
             };
@@ -221,18 +224,12 @@ impl MapIcons {
             if !pos.same_bits(spawned_at) {
                 moved += 1;
             }
-            let explored = map.explored_at(pos);
-            if explored < EXPLORED_MIN {
-                continue;
-            }
             let mut color = material.base_color();
             let is_combo = pickup.is_combo();
             if is_combo {
                 color[..3].copy_from_slice(&combo_rgb);
             }
-            color[3] = color[3].clamp(0.0, 1.0)
-                * fade
-                * math::smoothstep(EXPLORED_MIN, EXPLORED_FULL, explored);
+            color[3] = color[3].clamp(0.0, 1.0) * fade * found;
             self.pickups.push(index);
             self.positions.push(pos);
             self.looks.push(Look {

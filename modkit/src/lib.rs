@@ -11,6 +11,7 @@
 //!   being patched, and removed only once no thread is inside the mod.
 //! - **Settings** ([`settings`]): declared by features, kept in a TOML file next to the DLL that is
 //!   completed with documented defaults and reloaded when it changes.
+//! - **Storage** ([`storage`]): where features keep files of their own, next to the DLL.
 //! - **Isolation**: a feature that panics is turned off (and its changes undone) while the rest keep
 //!   running. The mod allocates from its own heap, freed when the mod is unloaded.
 //!
@@ -28,6 +29,7 @@ mod lifecycle;
 pub mod log;
 mod module;
 pub mod settings;
+pub mod storage;
 
 pub use feature::Feature;
 pub use lifecycle::Mod;

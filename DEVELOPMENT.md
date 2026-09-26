@@ -13,13 +13,31 @@ install it, see the [README](README.md).
   Windows' DbgHelp to look up the functions, globals and struct layouts it needs by name. Each field is
   checked at the size the mod uses it at, so if a game update changes something the mod relies on, the
   mod turns itself off and says why in the log instead of reading the wrong memory.
-- **Hooks.** It hooks two game functions with [`detour`](https://crates.io/crates/detour):
-  `render_game`, for the camera, the UI and the mouse of the frame being rendered, and
-  `begin_trace_stage`, which marks the start of each rendering stage. When the `menus` stage begins,
-  the game has just drawn its map markers and is about to draw menus on top: that's where the icons are
-  drawn, with the game's own `draw_cell_icons`.
-- **Which pickups are shown.** A pickup is shown when the map hex it's in has been explored, the same
-  data the map uses to reveal walls.
+- **Hooks.** It hooks game functions with [`detour`](https://crates.io/crates/detour):
+  `render_game`, for the camera, the UI and the mouse of the frame being rendered,
+  `begin_trace_stage`, which marks the start of each rendering stage, and `do_text_button`, which
+  draws the menus' buttons. When the `menus` stage begins, the game has just drawn its map markers and
+  is about to draw menus on top: that's where the icons are drawn, with the game's own
+  `draw_cell_icons`.
+- **Which pickups are shown.** A pickup is shown once the player has found it, by coming close enough
+  to see it: within the fog of war's radius (`w.vision_radius`, the player's body's, 1000 by default)
+  where the map's light (the game's `light_value`) is normal (0.5) or brighter, closing in to 400 units
+  in the dark (light 0). That's checked every frame, also with the map open, since the player can move
+  then too, and a newly found pickup's icon fades in over half a second. Only the light while the
+  player is near counts, so lighting up a spot later (a boss's death makes walls glow) reveals nothing
+  by itself. The map's own `explored` data isn't used: the game explores around its camera whether
+  it's lit or not, and a sandbox counts its whole map as explored.
+- **Remembering found pickups.** Pickups have no ids, so found ones are kept as their material's id
+  and their position, followed as they move, and matched up again when the pickups change: one that
+  disappears was picked up, unless many disappear at once (the game clearing the world). They're saved
+  every few seconds while they change, with postcard, to `primordialis_qol_detected.bin`. Like the
+  game's saves, the file keeps one normal run and one sandbox, told apart by the save the game uses
+  (`saver.save_dir`). A run is identified by its save, seed and start time (`w.run.start_time`, which
+  the game saves with it), so a new run replaces the old one of its kind, even on the same seed.
+- **The version in the menus.** The main and pause menus show the game's version as a button, with
+  its text centered. Just before `do_text_button` draws it, the mod measures the text with the game's
+  `get_text_size` and moves the button up by a line, then draws its own version where it was with
+  `draw_text`, in the button's font and color, starting where the game's text starts.
 - **Where they're shown.** The game only simulates pickups near the camera, so far-away pickups can
   still sit where they spawned, inside rock, until its physics pushes them out as you approach. The mod
   applies the same push-out, with the game's own wall distance field, so icons show where pickups will

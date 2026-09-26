@@ -1,6 +1,7 @@
-//! Primordialis QoL mod: shows the icon of every cell pickup on the map, for areas you have explored,
-//! spreads out icons that overlap under the mouse and shows the game's tooltip for the one it points
-//! at, and shows those icons and the Echolocation mutation's markers where pickups will settle.
+//! Primordialis QoL mod: shows the icon of every cell pickup on the map that you've been close enough
+//! to see (less close where it's lit), spreads out icons that overlap under the mouse and
+//! shows the game's tooltip for the one it points at, and shows those icons and the Echolocation
+//! mutation's markers where pickups will settle. Its version shows under the game's in the menus.
 //!
 //! Loaded by the game itself through its `--customdll "primordialis_qol.dll"` launch option (or by the
 //! hot reload host during development). Everything about loading, hooking and reading the game is
@@ -9,11 +10,13 @@
 mod combo;
 mod echolocation;
 mod fades;
+mod found_cells;
 mod grid_pickups;
 mod hide_duplicates;
 mod leaders;
 mod map_icons;
 mod math;
+mod menu_version;
 mod settle;
 mod spread;
 mod tooltip;
@@ -29,6 +32,7 @@ modkit::entry!(modkit::Mod {
             Box::new(map_icons::MapIcons::new(grid.clone())),
             Box::new(hide_duplicates::HideDuplicates::new(grid.clone())),
             Box::new(echolocation::EcholocationFix::new(grid)),
+            Box::new(menu_version::MenuVersion),
         ]
     },
 });

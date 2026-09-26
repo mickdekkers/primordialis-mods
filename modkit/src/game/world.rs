@@ -5,15 +5,11 @@ use std::ffi::c_void;
 use super::types::{Real2, Wall, WallSample};
 use super::{Game, read, write};
 
-/// Map hexes are 200 units apart: hex (q, r) is centered at (200q + 100r, 173.205r). These are
-/// constants in `update_cells`' code (not symbols), taken from the current build: it builds hex
-/// centers from 200, 100 and 173.20508 (100√3) when it updates `map.explored`.
-const HEX_SPACING: f32 = 200.0;
-const HEX_ROW_HEIGHT: f32 = 173.205_08;
-
 /// `wall_t wall_map(map_t*, real_2, bool)`. The 24-byte `wall_t` is returned through a hidden pointer
 /// argument, which Rust does as well for this signature.
 type WallMap = unsafe extern "C" fn(*const c_void, Real2, bool) -> WallSample;
+/// `float light_value(map_t*, real_2)`: blends `map.light` of the hexes around the position.
+type LightValue = unsafe extern "C" fn(*const c_void, Real2) -> f32;
 
 /// The game's array of cell pickups (`w.cell_pickups`).
 #[derive(Clone, Copy)]
@@ -158,6 +154,13 @@ impl<'a> Material<'a> {
         }
     }
 
+    /// Identifies the material in any game session, unlike its index: combo materials are added to
+    /// the list as they're made.
+    pub fn id(&self) -> u32 {
+        // SAFETY: `material_t.id`, an unsigned int.
+        unsafe { read(self.address + self.game.bindings.material_id) }
+    }
+
     /// How much of a body's genome size the cell takes up.
     pub fn genome_size(&self) -> f32 {
         // SAFETY: `material_t.genome_size`, a float.
@@ -177,11 +180,19 @@ impl<'a> Material<'a> {
     }
 }
 
-/// The world map (`w.map`): a grid of hexes, and the walls.
+/// Identifies a map: it changes when another world is loaded or generated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MapId {
+    explored: usize,
+    lower: (i32, i32),
+    upper: (i32, i32),
+}
+
+/// The world map (`w.map`): a grid of hexes, their light, and the walls.
 #[derive(Clone, Copy)]
 pub struct Map<'a> {
     game: Game<'a>,
-    /// Hex bounds of the `explored` grid: `lower` inclusive, `upper` exclusive.
+    /// The hex grid's bounds and its `explored` array, which only identify the map (`MapId`).
     lower: (i32, i32),
     upper: (i32, i32),
     explored: usize,
@@ -202,19 +213,27 @@ impl<'a> Map<'a> {
         }
     }
 
-    /// How explored the map hex containing `pos` is, as the map shows it: 0 unexplored, rising to 1
-    /// as the player sees it.
-    pub fn explored_at(&self, pos: Real2) -> f32 {
-        let (q, r) = hex_at(pos);
-        let (lower, upper) = (self.lower, self.upper);
-        if self.explored == 0 || q < lower.0 || q >= upper.0 || r < lower.1 || r >= upper.1 {
-            return 0.0;
+    pub fn id(&self) -> MapId {
+        MapId {
+            explored: self.explored,
+            lower: self.lower,
+            upper: self.upper,
         }
-        let width = (upper.0 - lower.0) as usize;
-        let index = (r - lower.1) as usize * width + (q - lower.0) as usize;
-        // SAFETY: The game's `(upper_q - lower_q) * (upper_r - lower_r)` values, and the index is
-        // within the bounds checked above.
-        unsafe { read((self.explored as *const f32).add(index) as usize) }
+    }
+
+    /// How lit the map is at `pos`, blended between the hexes around it. Biomes light their hexes
+    /// (0.5 by default, from 0.3 to 1 in this game version), and dark areas, which the player lights up
+    /// with light cells, set theirs to 0. `None` if this version of the game doesn't have
+    /// `light_value` as expected.
+    pub fn light_at(&self, pos: Real2) -> Option<f32> {
+        let bindings = self.game.bindings;
+        let light_value = bindings.light_value.ok()?;
+        // SAFETY: The game's `light_value` with its `w.map`, which only reads the map.
+        let light = unsafe {
+            let light_value: LightValue = std::mem::transmute(light_value);
+            light_value((bindings.world + bindings.map) as *const c_void, pos)
+        };
+        light.is_finite().then_some(light)
     }
 
     /// Samples the wall distance field the game's physics uses, at `pos`.
@@ -225,64 +244,6 @@ impl<'a> Map<'a> {
             let wall_map: WallMap = std::mem::transmute(bindings.wall_map);
             let sample = wall_map((bindings.world + bindings.map) as *const c_void, pos, true);
             Wall::new(sample, bindings.wall_extras.is_available())
-        }
-    }
-}
-
-/// The map hex containing a world position, in axial coordinates.
-fn hex_at(pos: Real2) -> (i32, i32) {
-    let r = pos.y / HEX_ROW_HEIGHT;
-    let q = (pos.x - 0.5 * HEX_SPACING * r) / HEX_SPACING;
-    // Round in cube coordinates (q + r + s = 0), fixing up whichever component rounded the most.
-    let s = -q - r;
-    let (mut rq, mut rr, rs) = (q.round(), r.round(), s.round());
-    let (dq, dr, ds) = ((rq - q).abs(), (rr - r).abs(), (rs - s).abs());
-    if dq > dr && dq > ds {
-        rq = -rr - rs;
-    } else if dr > ds {
-        rr = -rq - rs;
-    }
-    (rq as i32, rr as i32)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn center(q: i32, r: i32) -> Real2 {
-        Real2 {
-            x: HEX_SPACING * q as f32 + 0.5 * HEX_SPACING * r as f32,
-            y: HEX_ROW_HEIGHT * r as f32,
-        }
-    }
-
-    #[test]
-    fn hex_centers_round_trip() {
-        for q in -20..20 {
-            for r in -20..20 {
-                assert_eq!(hex_at(center(q, r)), (q, r));
-            }
-        }
-    }
-
-    #[test]
-    fn points_near_a_center_belong_to_its_hex() {
-        let c = center(3, -7);
-        for (dx, dy) in [
-            (90.0, 0.0),
-            (-90.0, 0.0),
-            (0.0, 90.0),
-            (0.0, -90.0),
-            (60.0, 60.0),
-            (-60.0, -60.0),
-        ] {
-            assert_eq!(
-                hex_at(Real2 {
-                    x: c.x + dx,
-                    y: c.y + dy
-                }),
-                (3, -7)
-            );
         }
     }
 }

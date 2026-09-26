@@ -1,4 +1,4 @@
-//! Turns the game's rendering into feature calls, by hooking two game functions:
+//! Turns the game's rendering into feature calls, by hooking game functions:
 //!
 //! - `render_game(world_rc, ui_rc, input, ..., dt, ...)`: renders a frame. Gives the frame's world and
 //!   UI render contexts (their cameras and fonts), its input (the mouse) and its time step, and marks
@@ -6,6 +6,8 @@
 //! - `begin_trace_stage(name)`: called at the start of every rendering stage (it only records timings
 //!   when the profiler is on). Anchoring on stage names instead of code addresses survives game
 //!   updates. A stage ends when the next begins, or when the frame ends.
+//! - `do_text_button(rc, input, pos, half_size, text)`: draws a button of the game's menus. Only
+//!   hooked if the menu bindings resolved.
 
 use std::cell::Cell;
 use std::ffi::{CStr, c_char, c_void};
@@ -16,16 +18,25 @@ use std::sync::{Mutex, TryLockError};
 use crate::Result;
 use crate::feature::{Feature, Features};
 use crate::game::bindings::Bindings;
-use crate::game::{Frame, Game, Stage};
+use crate::game::menu;
+use crate::game::types::{Real2, Real3};
+use crate::game::{Frame, Game, MenuButton, Stage};
 use crate::hook::{Hook, Hooks, InFlight, Original};
 use crate::log;
 
 type RenderGame =
     unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void, *mut c_void, f32, *mut c_void);
 type BeginTraceStage = unsafe extern "C" fn(*const c_char);
+/// `button do_text_button(render_context*, user_input*, real_3 pos, real_2 half_size, char* text)`.
+/// The x64 ABI passes the 12-byte `real_3` by reference, and the 8-byte `real_2` by value in a
+/// register. The result, whose bit 0 says whether the button was clicked, comes back in `eax`, which
+/// the detour passes on whole.
+type DoTextButton =
+    unsafe extern "C" fn(*mut c_void, *mut c_void, *const Real3, Real2, *const c_char) -> u32;
 
 static ORIGINAL_RENDER_GAME: Original<RenderGame> = Original::new();
 static ORIGINAL_BEGIN_TRACE_STAGE: Original<BeginTraceStage> = Original::new();
+static ORIGINAL_DO_TEXT_BUTTON: Original<DoTextButton> = Original::new();
 
 struct Running {
     bindings: Bindings,
@@ -79,8 +90,9 @@ pub fn start(bindings: Bindings, features: Features) -> Result<()> {
     }
     // SAFETY: The addresses come from the game's own symbols, and the detours' signatures match the
     // game's declarations: `void render_game(render_context*, render_context*, user_input*,
-    // recording_buffer*, float, window_t*)` and `void begin_trace_stage(char*)`.
-    let hooks = unsafe {
+    // recording_buffer*, float, window_t*)`, `void begin_trace_stage(char*)` and `do_text_button`
+    // (see `DoTextButton`).
+    let mut hooks = unsafe {
         vec![
             Hook::new(
                 "render_game",
@@ -96,6 +108,17 @@ pub fn start(bindings: Bindings, features: Features) -> Result<()> {
             ),
         ]
     };
+    if let Some(menu) = bindings.menu.ok() {
+        // SAFETY: As above.
+        hooks.push(unsafe {
+            Hook::new(
+                "do_text_button",
+                menu.do_text_button,
+                do_text_button as DoTextButton,
+                &ORIGINAL_DO_TEXT_BUTTON,
+            )
+        });
+    }
     let hooks = Hooks::new(hooks)?;
     let running = Box::into_raw(Box::new(Running {
         bindings,
@@ -200,6 +223,60 @@ extern "C" fn begin_trace_stage(name: *const c_char) {
         let stage = Stage::new(unsafe { CStr::from_ptr(name) });
         dispatch(frame, |feature, frame| feature.stage_begin(frame, stage));
     }
+}
+
+extern "C" fn do_text_button(
+    render_context: *mut c_void,
+    input: *mut c_void,
+    position: *const Real3,
+    half_size: Real2,
+    text: *const c_char,
+) -> u32 {
+    let _in_flight = InFlight::enter();
+    let original = ORIGINAL_DO_TEXT_BUTTON.get();
+    // Only hooked if the menu bindings resolved. A button drawn by something a feature called isn't
+    // passed to the features again.
+    let menu = running().bindings.menu.ok();
+    let usable =
+        !DISPATCHING.get() && !render_context.is_null() && !position.is_null() && !text.is_null();
+    let Some(menu) = menu.filter(|_| usable) else {
+        // SAFETY: Forwards the game's own arguments to the original function.
+        return unsafe { original(render_context, input, position, half_size, text) };
+    };
+    // SAFETY: The game passes the button's position as a `real_3*`, and its text as a NUL-terminated
+    // string, which outlives the call.
+    let (at, label) = unsafe { (position.read_unaligned(), CStr::from_ptr(text)) };
+    // SAFETY: Drawing the menu, with the render context the game draws the button with.
+    let size = unsafe { menu::text_size(&menu, render_context as usize, label) };
+    let mut button = MenuButton::new(&menu, label, size, at);
+    dispatch_menu_button(&mut button);
+    let moved = button.position();
+    // SAFETY: The game's own arguments, but with the position the features chose: a by-value
+    // `real_3`, which the callee gets its own copy of either way.
+    let result = unsafe { original(render_context, input, &moved, half_size, text) };
+    // SAFETY: The game just drew the button with this render context.
+    unsafe { menu::draw_labels(&menu, render_context as usize, &button) };
+    result
+}
+
+/// Lets every feature change a menu button before the game draws it.
+fn dispatch_menu_button(button: &mut MenuButton) {
+    let running = running();
+    let mut features = match running.features.try_lock() {
+        Ok(features) => features,
+        Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+        Err(TryLockError::WouldBlock) => return,
+    };
+    // SAFETY: The main and pause menus are drawn by `do_pause_menu`, which only `render_game` calls:
+    // this is the render thread inside `render_game`. It's only used to revert a feature that panics.
+    let game = unsafe { Game::new(&running.bindings) };
+    // `each` catches the features' panics, so this is always reset.
+    DISPATCHING.set(true);
+    features.each(
+        |feature| feature.menu_button(button),
+        |feature| feature.revert(&game),
+    );
+    DISPATCHING.set(false);
 }
 
 fn end_stage(frame: FrameState) {

@@ -10,7 +10,7 @@ use std::mem::{offset_of, size_of};
 
 use super::symbols::Symbols;
 use super::types::{
-    CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, TooltipState,
+    CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real3, Real4x4, TooltipState,
     TranslationInfo, WallSample,
 };
 use crate::{Result, log};
@@ -34,6 +34,12 @@ pub struct Bindings {
     pub wall_extras: Optional<()>,
     /// `do_tooltip(render_context*, tooltip_t*, ...)`: draws the tooltip of a cell, mutation or body.
     pub do_tooltip: usize,
+    /// `float light_value(map_t*, real_2)`: how lit the map is at a position.
+    pub light_value: Optional<usize>,
+    /// What changing the game's menu buttons needs.
+    pub menu: Optional<MenuBindings>,
+    /// Which save the current run is kept in.
+    pub save_slots: Optional<SaveSlotBindings>,
 
     /// The global `world w`.
     pub world: usize,
@@ -43,11 +49,21 @@ pub struct Bindings {
     /// `w.map` (`map_t`), as an offset in `world`.
     pub map: usize,
     /// `w.map.explored` (`float*`, one value per map hex) and `w.map.map_range` (hex bounds), as offsets
-    /// in `world`.
+    /// in `world`. A new map gets new ones, so they identify it.
     pub explored: usize,
     pub map_range: MapRange,
     /// `w.frame_number` (`int`), which counts simulation steps.
     pub frame_number: usize,
+    /// `w.camera_pos` (`real_2`): where the camera, which follows the player, is centered. The map is
+    /// explored around it.
+    pub camera_pos: usize,
+    /// `w.vision_radius` (`float`): how far around `camera_pos` the fog of war clears on the map
+    /// (`walls.glsl`), taken from the player's body.
+    pub vision_radius: usize,
+    /// `w.seed` (`unsigned int`): the world's seed, which a saved run keeps.
+    pub seed: usize,
+    /// `w.run.start_time` (`double`): when the run was started, a timestamp saved with the run.
+    pub run_start_time: usize,
     /// The `w.map_mode` bitfield: byte offset of its `u32` storage and bit position.
     pub map_mode: (usize, u32),
     /// `w.tooltip` (`tooltip_t`) and `w.tooltip_active` (`bool`): the tooltip of the pickup under the
@@ -76,6 +92,8 @@ pub struct Bindings {
     pub materials_list: usize,
     pub n_materials: usize,
     pub material_size: usize,
+    /// `material_t.id` (`unsigned int`), which identifies a material in any game session.
+    pub material_id: usize,
     pub material_base_color: usize,
     pub material_uv: usize,
     pub material_genome_size: usize,
@@ -111,6 +129,11 @@ impl<T: Copy> Optional<T> {
         self.0.is_ok()
     }
 
+    /// The resolved value, if there is one.
+    pub fn ok(&self) -> Option<T> {
+        self.0.as_ref().ok().copied()
+    }
+
     /// The resolved value. Panics if it couldn't be resolved, which turns off the feature that
     /// called this (see `Feature`).
     pub fn get(&self) -> T {
@@ -119,6 +142,42 @@ impl<T: Copy> Optional<T> {
             Err(error) => panic!("{error}"),
         }
     }
+}
+
+/// The game's text buttons (`do_text_button`, which draws the menus' buttons), and drawing text the
+/// way they do.
+#[derive(Clone, Copy, Debug)]
+pub struct MenuBindings {
+    /// `button do_text_button(render_context*, user_input*, real_3 pos, real_2 half_size, char*)`.
+    pub do_text_button: usize,
+    /// `void draw_text(char*, float x, float y, real_4 color, real_2 align, font_info*,
+    /// text_params*)`.
+    pub draw_text: usize,
+    /// `real_2 get_text_size(char*, font_info, text_params)`, which shares its name with an
+    /// overload.
+    pub get_text_size: usize,
+    /// The global `char* version_string`, which the main and pause menus show as a button.
+    pub version_string: usize,
+    /// The global `text_params default_shadow`, which buttons draw their text with, and the size of
+    /// a `text_params`.
+    pub default_shadow: usize,
+    pub text_params_size: usize,
+    /// `render_context.foreground_color` (`real_4`): the color of a button's text.
+    pub rc_foreground_color: usize,
+    /// `render_context.default_font` (`font_info`), the buttons' font, and its size.
+    pub rc_default_font: usize,
+    pub font_info_size: usize,
+}
+
+/// The global `saver_t saver`, whose `save_dir` points at the folder of the save in use: its
+/// `normal_save_dir` for a normal run, or its `sandbox_save_dir` for a sandbox.
+#[derive(Clone, Copy, Debug)]
+pub struct SaveSlotBindings {
+    pub saver: usize,
+    /// Offsets in `saver_t`: `save_dir` (`char*`), and the two folders it can point at.
+    pub save_dir: usize,
+    pub normal_save_dir: usize,
+    pub sandbox_save_dir: usize,
 }
 
 /// Offsets of `bounding_box_2 { int_2 l, u; }` fields, relative to `world`.
@@ -142,6 +201,7 @@ impl Bindings {
         let cell_item = symbols.layout("cell_item")?;
         let render_context = symbols.layout("render_context")?;
         let input = symbols.layout("user_input")?;
+        let run_stats = symbols.layout("run_stats")?;
 
         verify_mirrored_layouts(symbols)?;
         expect_size(symbols, "materials_list", size_of::<usize>())?;
@@ -178,6 +238,9 @@ impl Bindings {
             draw_line: Optional::new("draw_line", symbols.function("draw_line", 5)),
             wall_extras: Optional::new("wall_t.flow and air_dist", verify_wall_extras(symbols)),
             do_tooltip: symbols.function("do_tooltip", 9)?,
+            light_value: Optional::new("light_value", symbols.function("light_value", 2)),
+            menu: Optional::new("menu buttons", resolve_menu(symbols)),
+            save_slots: Optional::new("save slots", resolve_save_slots(symbols)),
 
             world: symbols.address("w")?,
             cell_pickups: world.offset_of::<usize>("cell_pickups")?,
@@ -191,6 +254,11 @@ impl Bindings {
                 upper_y: range + upper + 4,
             },
             frame_number: world.offset_of::<i32>("frame_number")?,
+            camera_pos: world.offset_of::<Real2>("camera_pos")?,
+            vision_radius: world.offset_of::<f32>("vision_radius")?,
+            seed: world.offset_of::<u32>("seed")?,
+            run_start_time: world.offset_sized("run", run_stats.size)?
+                + run_stats.offset_of::<f64>("start_time")?,
             map_mode: world.flag("map_mode")?,
             tooltip: world.offset_of::<TooltipState>("tooltip")?,
             tooltip_active: world.offset_of::<bool>("tooltip_active")?,
@@ -212,6 +280,7 @@ impl Bindings {
             materials_list: symbols.address("materials_list")?,
             n_materials: symbols.address("n_materials")?,
             material_size: material.size,
+            material_id: material.offset_of::<u32>("id")?,
             material_base_color: material.offset_of::<[f32; 4]>("base_color")?,
             material_uv: material.offset_of::<[f32; 2]>("uv")?,
             material_genome_size: material.offset_of::<f32>("genome_size")?,
@@ -288,6 +357,42 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         "real_4x4 size changed",
     )?;
     Ok(())
+}
+
+fn resolve_save_slots(symbols: &Symbols) -> Result<SaveSlotBindings> {
+    let saver = symbols.layout("saver_t")?;
+    expect_size(symbols, "saver", saver.size)?;
+    Ok(SaveSlotBindings {
+        saver: symbols.address("saver")?,
+        save_dir: saver.offset_of::<usize>("save_dir")?,
+        // Only their addresses are used, never their contents.
+        normal_save_dir: saver.offset("normal_save_dir")?,
+        sandbox_save_dir: saver.offset("sandbox_save_dir")?,
+    })
+}
+
+fn resolve_menu(symbols: &Symbols) -> Result<MenuBindings> {
+    let render_context = symbols.layout("render_context")?;
+    let font_info = symbols.layout("font_info")?;
+    let text_params = symbols.layout("text_params")?;
+    // Button positions are passed as a `Real3`.
+    expect(
+        symbols.layout("real_3")?.size == size_of::<Real3>(),
+        "real_3 size changed",
+    )?;
+    expect_size(symbols, "version_string", size_of::<usize>())?;
+    expect_size(symbols, "default_shadow", text_params.size)?;
+    Ok(MenuBindings {
+        do_text_button: symbols.function("do_text_button", 5)?,
+        draw_text: symbols.function("draw_text", 7)?,
+        get_text_size: symbols.function("get_text_size", 3)?,
+        version_string: symbols.address("version_string")?,
+        default_shadow: symbols.address("default_shadow")?,
+        text_params_size: text_params.size,
+        rc_foreground_color: render_context.offset_of::<[f32; 4]>("foreground_color")?,
+        rc_default_font: render_context.offset_sized("default_font", font_info.size)?,
+        font_info_size: font_info.size,
+    })
 }
 
 /// The fields of `wall_t` no feature reads.
@@ -369,6 +474,8 @@ mod tests {
             println!("{exe}: base {base:#x}\n{bindings:#x?}");
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
             assert!(bindings.draw_line.is_available() && bindings.wall_extras.is_available());
+            assert!(bindings.light_value.is_available() && bindings.menu.is_available());
+            assert!(bindings.save_slots.is_available());
             let pickup = symbols.layout("cell_pickup").unwrap();
             assert!(
                 pickup.offset_of::<f64>("alpha").is_err(),

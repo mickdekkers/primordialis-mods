@@ -42,6 +42,9 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
   - `begin_trace_stage(name)`: stage boundaries. The `racing_overlay` stage (Echolocation markers,
     and the game's tooltip for the pickup under the mouse in the world) comes right before `menus`. When `menus` begins, the UI framebuffer is bound and the map markers
     have just been drawn: that's where the mod draws.
+  - `do_text_button(rc, input, pos, half_size, text)`: the main and pause menus' buttons (both menus
+    are drawn by `do_pause_menu`, inside `render_game`). Features get a `MenuButton` to move, or to
+    add labels to (`Feature::menu_button`). Only hooked if its bindings resolve.
   - Those are the only two stages that read the pickups one by one: `racing_overlay` draws a marker
     for every pickup within range of the camera, and `cell pickups` queues the pickups near the
     camera to be drawn in the world, faded by `cell_pickup.alpha`. Features change pickups for one
@@ -53,6 +56,19 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
   `cell pickups` and `racing_overlay` see the previous frame's.
 - **Simulation clock:** `w.frame_number` counts simulation steps at a fixed 120 per second, so it's
   frame-rate independent. Use it for animation timing.
+- **Map light:** each biome lights its hexes of `map.light` (`biome_type.light`: 0.5 by default, 0.3
+  to 1), and the darkness modifier (`biome_darkness`) sets its hexes to 0 and leaves light cells at the
+  entrances. The game's `light_value` blends it between hexes (`Map::light_at`), and the light changes
+  at runtime (`set_glowing_walls` runs when a boss dies).
+- **Exploring and sight:** exploring ignores light: `update_cells` explores every hex around
+  `w.camera_pos` (`Game::view_center`), lit or not, within a hardcoded 1000 units (3000 with
+  Echolocation), and a sandbox counts its whole map as explored (every `explored` value is 1), so the
+  mod doesn't use `explored`. The fog of war on the map is a different radius: `w.vision_radius`
+  (`Game::vision_radius`), copied from the player's body, clear within 80% of it (`walls.glsl`).
+  `src/found_cells` shows a pickup only once the player came within that radius of it (less in the
+  dark), map open or not (the player can move with it open), the same way in normal runs and
+  sandboxes. It remembers found ones in `primordialis_qol_detected.bin` (`modkit::storage`), per save
+  slot (`Game::save_slot`) and run.
 - **Pickups:**
   - The game only simulates pickups near the camera; far away they can sit inside rock.
   - `is_combo` pickups only come from map generation. The sandbox combo tool can't produce one.
@@ -149,9 +165,10 @@ These keep hooking and unloading safe while the game runs:
 - **Checking what a change pulls in:** preview it with `cargo update --workspace --dry-run`, and
   build with `--offline` to prove nothing new was fetched.
 - **Build dependencies count too:** `embed-resource` and its tree (including `cc`, `vswhom-sys`,
-  `winreg` and windows-sys 0.59) run on the build machine. `cc` and `find-msvc-tools` are held below
-  their newest releases in `Cargo.lock` (releases younger than 30 days aren't used yet), so
-  `cargo update` would move them.
+  `winreg` and windows-sys 0.59) run on the build machine, and so do the proc macros postcard needs
+  (serde's `derive` isn't optional for it: `serde_derive`, `thiserror-impl`, `syn`). `cc`,
+  `find-msvc-tools`, `thiserror`, `syn` and `unicode-ident` are held below their newest releases in
+  `Cargo.lock` (releases younger than 30 days aren't used yet), so `cargo update` would move them.
 
 ## Style
 

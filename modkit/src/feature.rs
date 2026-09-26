@@ -2,7 +2,7 @@
 
 use std::panic::{self, AssertUnwindSafe};
 
-use crate::game::{Frame, Game, Stage};
+use crate::game::{Frame, Game, MenuButton, Stage};
 use crate::log;
 use crate::settings::Setting;
 
@@ -26,6 +26,11 @@ pub trait Feature: Send {
 
     /// A rendering stage ends: when the next one begins, or when the frame is done.
     fn stage_end(&mut self, _frame: &Frame, _stage: Stage) {}
+
+    /// The game is about to draw a text button in a menu, such as its version in the main and pause
+    /// menus. The feature can move it, and add labels next to it. Called on the render thread, while
+    /// the game draws the menu.
+    fn menu_button(&mut self, _button: &mut MenuButton) {}
 
     /// Undoes every change the feature made to the game's state that it would otherwise undo later
     /// (e.g. at the end of a stage), because it's about to stop: the mod is being unloaded, or the
