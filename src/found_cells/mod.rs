@@ -345,6 +345,127 @@ mod tests {
         assert_eq!(fade_in(-5), 1.0, "the frame number went back");
     }
 
+    fn pickup(index: usize, material: u32, x: f32) -> Candidate {
+        Candidate {
+            index,
+            material,
+            position: Real2::new(x, 0.0),
+        }
+    }
+
+    fn cell(material: u32, x: f32) -> Cell {
+        Cell {
+            material,
+            position: [x, 0.0],
+        }
+    }
+
+    /// Matches `found` with a new pickup array holding `pickups`.
+    fn rematch(found: &mut FoundCells, address: usize, pickups: &[Candidate]) {
+        let len = pickups.len();
+        let id = PickupsId::for_tests(address, len);
+        found.rematch(id, len, pickups.iter().copied());
+    }
+
+    /// Cells as the file gives them, matched with `pickups`.
+    fn loaded(cells: &[Cell], pickups: &[Candidate]) -> FoundCells {
+        let mut found = FoundCells {
+            pending: cells.to_vec(),
+            ..FoundCells::default()
+        };
+        rematch(&mut found, 0x1000, pickups);
+        found
+    }
+
+    /// The indices of the pickups shown as found, out of the first `len`.
+    fn shown(found: &FoundCells, len: usize) -> Vec<usize> {
+        (0..len).filter(|&i| found.alpha(i, 0).is_some()).collect()
+    }
+
+    #[test]
+    fn cells_from_the_file_match_the_nearest_pickup_of_their_kind() {
+        let found = loaded(
+            &[cell(1, 0.0), cell(1, 10.0), cell(2, 100.0)],
+            &[
+                pickup(0, 1, 12.0),
+                pickup(1, 1, 1.0),
+                pickup(2, 2, 140.0),
+                pickup(3, 3, 100.0),
+                pickup(4, 1, 500.0),
+            ],
+        );
+        assert_eq!(shown(&found, 5), [0, 1, 2]);
+        assert!(found.pending.is_empty());
+        assert_eq!(found.alpha(1, 0), Some(1.0), "shown at once, not faded in");
+        assert!(!found.dirty);
+    }
+
+    #[test]
+    fn a_found_pickup_that_disappears_was_picked_up() {
+        let mut found = loaded(
+            &[cell(1, 0.0), cell(2, 100.0)],
+            &[pickup(0, 1, 0.0), pickup(1, 2, 100.0), pickup(2, 3, 300.0)],
+        );
+        rematch(
+            &mut found,
+            0x1000,
+            &[pickup(0, 2, 100.0), pickup(1, 3, 300.0)],
+        );
+        assert_eq!(shown(&found, 2), [0]);
+        assert!(found.pending.is_empty(), "the picked up cell is forgotten");
+        assert!(found.dirty);
+    }
+
+    #[test]
+    fn cells_stay_found_while_the_world_is_cleared() {
+        let pickups: Vec<Candidate> = (0..20).map(|i| pickup(i, 1, i as f32 * 100.0)).collect();
+        let cells: Vec<Cell> = pickups.iter().map(|p| cell(1, p.position.x)).collect();
+        let mut found = loaded(&cells, &pickups);
+        assert_eq!(shown(&found, 20).len(), 20);
+
+        rematch(&mut found, 0x2000, &[]);
+        assert_eq!(found.pending.len(), 20, "no pickups: the world is cleared");
+        rematch(&mut found, 0x1000, &pickups);
+        assert_eq!(shown(&found, 20).len(), 20);
+
+        rematch(&mut found, 0x1000, &pickups[..20 - MAX_PICKED_AT_ONCE - 1]);
+        assert_eq!(
+            found.pending.len(),
+            MAX_PICKED_AT_ONCE + 1,
+            "too many at once"
+        );
+        assert!(!found.dirty);
+    }
+
+    #[test]
+    fn found_pickups_are_followed_as_they_move() {
+        let mut found = loaded(&[cell(1, 0.0)], &[pickup(0, 1, 0.0)]);
+        let at = |material: u32, x: f32| move |index| (index == 0).then(|| pickup(0, material, x));
+        assert!(found.follow(at(1, RESAVE_DISTANCE / 2.0)));
+        assert_eq!(found.tracked[0].cell.position, [0.0, 0.0]);
+        assert!(!found.dirty, "moving a little doesn't need saving");
+        assert!(found.follow(at(1, 30.0)));
+        assert_eq!(found.tracked[0].cell.position, [30.0, 0.0]);
+        assert!(found.dirty);
+
+        assert!(
+            !found.follow(at(1, 30.0 + MAX_STEP + 1.0)),
+            "too far in a frame"
+        );
+        assert!(!found.follow(at(2, 30.0)), "another kind of cell");
+        assert!(!found.follow(|_| None), "gone");
+    }
+
+    #[test]
+    fn a_found_pickup_keeps_fading_in_after_the_pickups_change() {
+        let mut found = loaded(&[cell(1, 0.0)], &[pickup(0, 1, 0.0)]);
+        // Found this session, at frame 100.
+        found.indices.insert(0, Some(100));
+        rematch(&mut found, 0x1000, &[pickup(0, 1, 0.0), pickup(1, 2, 60.0)]);
+        let alpha = found.alpha(0, 130).unwrap();
+        assert!(alpha > 0.0 && alpha < 1.0, "{alpha}");
+    }
+
     #[test]
     fn neighboring_squares_cover_the_match_distance() {
         // A cell and a pickup within MATCH_DISTANCE are at most one square apart on each axis.
