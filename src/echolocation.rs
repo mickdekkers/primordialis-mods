@@ -107,7 +107,8 @@ impl EcholocationFix {
         if !self.put_back(game) && !self.logged_unrestored {
             self.logged_unrestored = true;
             log::warn(
-                "pickups changed while moved for Echolocation; moved back those still where they                  were moved to",
+                "pickups changed while moved for Echolocation; moved back those still where they were \
+                 moved to",
             );
         }
     }
