@@ -142,11 +142,12 @@ impl MapIcons {
         let moved_out_of_walls = self.collect(game);
 
         // Where the mouse points on the map, through the UI camera to the screen, then back through
-        // the world camera onto the ground. Nowhere while the map is closing: the grid collapses, and
-        // the tooltip fades out.
+        // the world camera onto the ground. Nowhere while the map is closing, or behind a menu (the
+        // pause menu), where it's only background: nothing is hovered, the tooltip fades out, and the
+        // grid collapses (once the game runs again, if it's paused).
         let mouse_on_map = frame
             .mouse()
-            .filter(|_| game.map_mode())
+            .filter(|_| game.map_mode() && !game.menu_open())
             .and_then(|mouse| frame.ui_camera().project(mouse))
             .and_then(|ndc| camera.unproject(ndc));
         self.spread_out(game, radius, mouse_on_map, frame_number);

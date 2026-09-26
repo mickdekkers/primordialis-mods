@@ -28,6 +28,10 @@ pub use world::{Map, MapId, Material, Pickup, Pickups, PickupsId};
 
 use bindings::Bindings;
 
+/// `MENU_NONE` in the game's `MENU` enum: no menu is open. Copied by hand from the PDB, which lists
+/// the enum's values (`render_game` shows the pause menu for `MENU_PAUSE`, 1).
+const MENU_NONE: i32 = 0;
+
 /// The game's state, while it's safe to use.
 #[derive(Clone, Copy)]
 pub struct Game<'a> {
@@ -83,6 +87,17 @@ impl<'a> Game<'a> {
         let (offset, bit) = self.bindings.map_mode;
         // SAFETY: The `u32` storage of the `w.map_mode` bitfield.
         unsafe { read::<u32>(self.bindings.world + offset) & (1 << bit) != 0 }
+    }
+
+    /// Whether one of the game's menus, such as the pause menu, is open over the world, and over
+    /// the map screen if that's open too. False if this version of the game doesn't have `w.menu` as
+    /// expected.
+    pub fn menu_open(&self) -> bool {
+        let Some(offset) = self.bindings.open_menu.ok() else {
+            return false;
+        };
+        // SAFETY: `w.menu`, a `MENU` enum stored as an int.
+        unsafe { read::<i32>(self.bindings.world + offset) != MENU_NONE }
     }
 
     /// Where the game's camera is centered in the world. It follows the player (not the map screen's

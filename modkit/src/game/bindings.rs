@@ -67,6 +67,9 @@ pub struct Bindings {
     pub run_start_time: usize,
     /// The `w.map_mode` bitfield: byte offset of its `u32` storage and bit position.
     pub map_mode: (usize, u32),
+    /// `w.menu` (`MENU`, an `int`): the menu open over the world, such as the pause menu, as an
+    /// offset in `world`.
+    pub open_menu: Optional<usize>,
     /// `w.tooltip` (`tooltip_t`) and `w.tooltip_active` (`bool`): the tooltip of the pickup under the
     /// mouse in the world, as offsets in `world`.
     pub tooltip: usize,
@@ -262,6 +265,7 @@ impl Bindings {
             run_start_time: world.offset_sized("run", run_stats.size)?
                 + run_stats.offset_of::<f64>("start_time")?,
             map_mode: world.flag("map_mode")?,
+            open_menu: Optional::new("w.menu", world.offset_of::<i32>("menu")),
             tooltip: world.offset_of::<TooltipState>("tooltip")?,
             tooltip_active: world.offset_of::<bool>("tooltip_active")?,
             cell_items: em + edit_menu.offset_of::<usize>("cell_items")?,
@@ -477,7 +481,7 @@ mod tests {
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
             assert!(bindings.draw_line.is_available() && bindings.wall_extras.is_available());
             assert!(bindings.light_value.is_available() && bindings.menu.is_available());
-            assert!(bindings.save_slots.is_available());
+            assert!(bindings.save_slots.is_available() && bindings.open_menu.is_available());
             let pickup = symbols.layout("cell_pickup").unwrap();
             assert!(
                 pickup.offset_of::<f64>("alpha").is_err(),
