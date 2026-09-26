@@ -32,6 +32,9 @@ use bindings::Bindings;
 /// the enum's values (`render_game` shows the pause menu for `MENU_PAUSE`, 1).
 const MENU_NONE: i32 = 0;
 
+/// Below this `map_fade`, the map screen has faded out: nothing of it shows anymore.
+const MAP_SHOWN_FADE: f32 = 0.01;
+
 /// The game's state, while it's safe to use.
 #[derive(Clone, Copy)]
 pub struct Game<'a> {
@@ -78,7 +81,7 @@ impl<'a> Game<'a> {
 
     /// Whether the map screen is open (or still visibly fading out).
     pub fn map_open(&self) -> bool {
-        self.map_fade() > 0.01
+        self.map_fade() > MAP_SHOWN_FADE
     }
 
     /// Whether the player has the map screen open: unlike `map_open`, false as soon as it starts

@@ -42,6 +42,9 @@ const OVERLAP_DISTANCE: f32 = 2.1;
 /// How long spreading out and collapsing back take, in `frame_number` ticks (120 per second).
 const OPEN_TICKS: f32 = 18.0;
 const CLOSE_TICKS: f32 = 12.0;
+/// At most this many ticks count for one frame (a quarter of a second), so that the grid doesn't jump
+/// after the game was paused.
+const MAX_TICKS_PER_FRAME: i32 = 30;
 
 /// The grid being spread out, or collapsing back.
 #[derive(Default)]
@@ -80,7 +83,7 @@ impl Spread {
         frame_number: i32,
     ) {
         self.moved.clear();
-        let ticks = self.clock.advance(frame_number, 30);
+        let ticks = self.clock.advance(frame_number, MAX_TICKS_PER_FRAME);
         if self.pickups != Some(pickups_id) {
             self.pickups = Some(pickups_id);
             self.close_now();

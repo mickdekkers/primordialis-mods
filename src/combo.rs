@@ -22,6 +22,10 @@ const HALO_DOTS: usize = 16;
 const HALO_SPIN: f64 = 0.00265;
 /// Dot opacity relative to the icon's.
 pub(crate) const HALO_ALPHA: f32 = 0.9;
+/// The dots' colors cycle around this gray, this far towards each hue: light and saturated, to stand
+/// out on the dark map. Our choice, tuned by eye.
+const RAINBOW_BASE: f32 = 0.65;
+const RAINBOW_AMPLITUDE: f32 = 0.35;
 
 /// The ring of rainbow dots drawn around combo pickups for the current frame.
 pub(crate) struct Halo {
@@ -66,7 +70,8 @@ impl Halo {
 /// A light, saturated rainbow color, `t` going once around the hues from 0 to 1.
 fn rainbow(t: f32) -> [f32; 3] {
     use std::f32::consts::TAU;
-    [0.0, 2.0 / 3.0, 1.0 / 3.0].map(|phase| 0.65 + 0.35 * ((t + phase) * TAU).cos())
+    [0.0, 2.0 / 3.0, 1.0 / 3.0]
+        .map(|phase| RAINBOW_BASE + RAINBOW_AMPLITUDE * ((t + phase) * TAU).cos())
 }
 
 /// The color the game gives combo pickups on a given frame.

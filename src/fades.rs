@@ -17,6 +17,9 @@ const FADE_TICKS_FAR: f32 = 15.0;
 /// by the second, so icons further away stay clear.
 const SPOTLIGHT_RADIUS: f32 = 2.0;
 const SPOTLIGHT_EDGE: f32 = 10.0;
+/// At most this many ticks count for one frame (half a second), so that icons don't jump after the
+/// game was paused.
+const MAX_TICKS_PER_FRAME: i32 = 60;
 
 /// How faded each icon is. Every icon eases on its own, so the one the mouse leaves doesn't jump,
 /// whether to the next icon (it fades out as that one fades in) or off them all (the rest fade back in
@@ -80,7 +83,7 @@ impl Fades {
     /// tick, so it slows as it arrives, and a target that keeps moving (as the mouse does) is
     /// followed smoothly.
     pub(crate) fn ease(&mut self, frame_number: i32) {
-        let ticks = self.clock.advance(frame_number, 60);
+        let ticks = self.clock.advance(frame_number, MAX_TICKS_PER_FRAME);
         for (alpha, &(target, time_constant)) in self.alphas.iter_mut().zip(&self.targets) {
             *alpha += (target - *alpha) * (1.0 - (-ticks / time_constant).exp());
         }
