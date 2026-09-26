@@ -10,7 +10,7 @@ use windows_sys::Win32::System::SystemInformation::GetLocalTime;
 
 static LOG: Mutex<Option<File>> = Mutex::new(None);
 
-pub fn init(path: &Path, append: bool) {
+pub(crate) fn init(path: &Path, append: bool) {
     let file = if append {
         OpenOptions::new().create(true).append(true).open(path)
     } else {
@@ -20,7 +20,7 @@ pub fn init(path: &Path, append: bool) {
 }
 
 /// Closes the log file; later messages are dropped.
-pub fn close() {
+pub(crate) fn close() {
     *LOG.lock().unwrap_or_else(PoisonError::into_inner) = None;
 }
 
