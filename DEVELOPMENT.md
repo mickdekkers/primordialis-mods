@@ -150,35 +150,52 @@ original. It logs to `primordialis_qol_hot_reload.log`; the mod keeps logging to
 
 ## Releasing
 
-Releases are made by `.github/workflows/release.yml` when a version tag is pushed.
+### Recording changes
 
-**Each release:**
+Every change players would notice gets a change file, committed with the change itself, made with
+[changie](https://changie.dev):
 
-1. Set the new `version` in the root `Cargo.toml`, and build once so `Cargo.lock` picks it up (CI
-   builds with `--locked`).
-2. Add a `## <version>` section to `CHANGELOG.md`, written for players: it becomes the release notes.
-3. Commit, then tag and push:
+```
+changie new
+```
 
-   ```
-   git tag -a v0.2.0 -m "Primordialis QoL 0.2.0"
-   git push origin main v0.2.0
-   ```
+It asks for the kind (Added, Changed, Removed or Fixed) and a one-line description, written for players:
+it goes into the changelog and the release notes as it is. Changes players won't notice (refactoring,
+docs, CI) don't need one. The files wait in `.changes/unreleased/` until the next release; CI checks
+that they're valid, and that `CHANGELOG.md` is what changie makes of the released ones (don't edit it
+by hand).
 
-The workflow then:
+### Making a release
 
-1. Checks that the tag matches the version in `Cargo.toml`, and that `CHANGELOG.md` has a section for it.
+Run the Release workflow on `main`, from the Actions tab or with:
+
+```
+gh workflow run release.yml
+```
+
+It picks the version from the kinds of the waiting changes: a new minor version for anything Added,
+Changed or Removed, a patch version if there are only fixes. To choose it yourself, pass `major`, `minor`,
+`patch` or a version (`gh workflow run release.yml -f version=1.0.0`). The workflow then:
+
+1. Batches the waiting changes into the new version with changie: its section in `CHANGELOG.md`, and its
+   number in `Cargo.toml` and `Cargo.lock`. It commits that as "Release v<version>", without pushing it
+   yet. It fails if there's nothing to release.
 2. Runs the tests, and builds `primordialis_qol.dll` with `--remap-path-prefix`, so the paths Rust embeds
    point to `/cargo`, `/rustup` and `/build` instead of folders on the build machine. Then
    `.github/scripts/check-paths.ps1` checks that every path in the DLL has an expected form: no absolute
    paths at all, and every source path under one of those neutral roots (or the ones the Rust project's
    own builds use). Anything else fails the release. Run it on a local build to see what it catches.
 3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes).
-4. Creates the GitHub release with the changelog section, a VirusTotal badge linking to the full report,
-   the DLL's SHA-256, the DLL, and a zip with its PDB for investigating crashes.
+4. Pushes the release commit to `main`. It only fast-forwards: if `main` moved while the release was
+   being built, nothing is pushed or released, and running the workflow again starts over from the new
+   `main`.
+5. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
+   the full report, the DLL's SHA-256, the DLL, and a zip with its PDB for investigating crashes.
 
 If no engine flagged the DLL, the release is published. Otherwise, or if the scan didn't finish, it's
-left as a draft: look at the report, adjust the notes if needed, and publish it by hand. Heuristic
-engines sometimes flag DLLs that patch another program's code, which is exactly what a mod does.
+left as a draft: look at the report, adjust the notes if needed, and publish it by hand, which also
+creates its tag. Heuristic engines sometimes flag DLLs that patch another program's code, which is
+exactly what a mod does.
 
 Only the mod is released. The hot reload host and injector are development tools, and an injector is
 the kind of program antivirus rightly distrusts.

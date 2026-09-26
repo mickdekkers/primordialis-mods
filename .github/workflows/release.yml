@@ -1,17 +1,24 @@
 name: Release
 
-# Pushing a version tag (e.g. `v0.2.0`) builds the mod, scans it on VirusTotal and creates the GitHub
-# release. See "Releasing" in DEVELOPMENT.md.
+# Releases the changes recorded in .changes/unreleased: batches them into the next version (its
+# changelog section, release notes and version number), builds and tests it, scans the DLL on
+# VirusTotal, then pushes the release commit to main and publishes the release. Nothing is pushed or
+# published if a step fails. See "Releasing" in DEVELOPMENT.md.
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version: empty to pick it from the kinds of the changes, or major, minor, patch, or a version like 1.0.0"
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
-# Never run two releases of the same tag at once, and never cancel one halfway.
+# One release at a time, and never cancel one halfway.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 env:
@@ -21,11 +28,19 @@ env:
 
 jobs:
   build:
-    name: Build and test
+    name: Prepare, build and test
+    # Releases are made from main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-2025
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.prepare.outputs.version }}
+      commit: ${{ steps.prepare.outputs.commit }}
     steps:
+      # Check out the files exactly as committed (the runner would convert them to CRLF), so the release
+      # commit changes nothing but the version and the changelog.
+      - name: Keep line endings
+        run: git config --global core.autocrlf false
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -33,32 +48,62 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal
 
-      - name: Check the version and changelog
-        id: version
+      - name: Install changie
+        env:
+          # The official release binary, checked against the SHA-256 GitHub publishes for it. Update the
+          # version and hash together.
+          CHANGIE_URL: https://github.com/miniscruff/changie/releases/download/v1.26.0/changie_1.26.0_windows_amd64.zip
+          CHANGIE_SHA256: 86b1e2851d78be2b52b04c8129442d4fcc8b29edd839bcc893fe66486d72ae72
         run: |
+          $zip = Join-Path $env:RUNNER_TEMP changie.zip
+          Invoke-WebRequest $env:CHANGIE_URL -OutFile $zip
+          $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash
+          if ($hash -ne $env:CHANGIE_SHA256) { throw "changie's SHA-256 is $hash, expected $env:CHANGIE_SHA256" }
+          $bin = Join-Path $env:RUNNER_TEMP changie
+          Expand-Archive $zip -DestinationPath $bin
+          $bin >> $env:GITHUB_PATH
+
+      - name: Prepare the release
+        id: prepare
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          $bump = if ($env:REQUESTED) { $env:REQUESTED } else { 'auto' }
+          if ($bump -notmatch '^(auto|major|minor|patch|\d+\.\d+\.\d+)$') {
+            throw "'$bump' isn't a version: leave it empty, or give major, minor, patch, or e.g. 1.0.0."
+          }
+          # Fails if there are no changes to release.
+          changie batch $bump --allow-no-changes=false
+          if ($LASTEXITCODE) { throw 'changie batch failed' }
+          changie merge
+          if ($LASTEXITCODE) { throw 'changie merge failed' }
+          $tag = changie latest
+          $version = $tag.TrimStart('v')
+
+          # changie set the version in Cargo.toml and Cargo.lock; --locked fails if they disagree.
           $package = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
             Where-Object name -eq primordialis_qol
-          $version = $package.version
-          if ("v$version" -ne $env:GITHUB_REF_NAME) {
-            throw "The tag $env:GITHUB_REF_NAME doesn't match the version in Cargo.toml ($version)."
+          if ($package.version -ne $version) {
+            throw "Cargo.toml says $($package.version), but the release is $version."
           }
 
-          # The changelog's section for this version becomes the release notes.
-          $section = $null
-          foreach ($line in Get-Content CHANGELOG.md) {
-            if ($line -match '^## ') {
-              if ($null -ne $section) { break }
-              if ($line -match "^## $([regex]::Escape($version))(\s|$)") { $section = @() }
-            } elseif ($null -ne $section) {
-              $section += $line
-            }
-          }
-          $notes = if ($null -ne $section) { ($section -join "`n").Trim() } else { '' }
-          if (-not $notes) { throw "CHANGELOG.md has no section '## $version' (or it's empty)." }
-
+          # The version's changelog section, without its heading, becomes the release notes.
           New-Item -ItemType Directory -Force dist | Out-Null
-          Set-Content -Encoding utf8NoBOM dist/changelog.md $notes
+          $notes = (Get-Content ".changes/$tag.md" | Select-Object -Skip 1) -join "`n"
+          Set-Content -Encoding utf8NoBOM dist/changelog.md $notes.Trim()
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add CHANGELOG.md .changes Cargo.toml Cargo.lock
+          git commit --quiet -m "Release $tag" -m "Batches the changes in .changes/unreleased into CHANGELOG.md, and sets the version to $version."
+          if ($LASTEXITCODE) { throw 'git commit failed' }
+          # The publishing job pushes this commit, if everything else succeeds.
+          git bundle create dist/release.bundle "$env:GITHUB_SHA..HEAD"
+          if ($LASTEXITCODE) { throw 'git bundle failed' }
+          git show --stat HEAD
+
           "version=$version" >> $env:GITHUB_OUTPUT
+          "commit=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
       - name: Test
         run: cargo test --release --locked
@@ -80,7 +125,7 @@ jobs:
 
       - name: Package
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.prepare.outputs.version }}
         run: |
           Copy-Item target/release/primordialis_qol.dll dist/
           Compress-Archive target/release/primordialis_qol.pdb "dist/primordialis_qol-$env:VERSION-debug-symbols.zip"
@@ -98,15 +143,15 @@ jobs:
     # The environment holding the VirusTotal key, so that no other job can use it.
     environment: release
     permissions:
-      contents: write # to create the release
+      contents: write # to push the release commit and create the release
     env:
       VERSION: ${{ needs.build.outputs.version }}
-      TAG: ${{ github.ref_name }}
+      COMMIT: ${{ needs.build.outputs.commit }}
     steps:
+      # The commit the release was prepared from, which the release commit's bundle builds on.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: .github/scripts
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -119,13 +164,27 @@ jobs:
           VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
         run: bash .github/scripts/virustotal.sh dist/primordialis_qol.dll virustotal.md
 
+      # Only a fast-forward: if main moved since the build started, this fails and nothing is released.
+      - name: Push the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --quiet dist/release.bundle HEAD
+          if [[ $(git rev-parse FETCH_HEAD) != "$COMMIT" ]]; then
+            echo "::error::The bundle doesn't hold the release commit $COMMIT."
+            exit 1
+          fi
+          gh auth setup-git
+          git push origin "$COMMIT:refs/heads/main"
+
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           CLEAN: ${{ steps.scan.outputs.clean }}
         run: |
+          tag="v$VERSION"
           sha256=$(sha256sum dist/primordialis_qol.dll | cut -d' ' -f1)
-          install="https://github.com/$GITHUB_REPOSITORY/blob/$TAG/README.md#install"
+          install="https://github.com/$GITHUB_REPOSITORY/blob/$tag/README.md#install"
           {
             printf '%s\n\n' "$(cat dist/changelog.md)"
             echo "### Install"
@@ -142,6 +201,6 @@ jobs:
             draft=(--draft)
             echo "::warning::Left the release as a draft: check the VirusTotal report, then publish it by hand."
           fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
             --title "Primordialis QoL $VERSION" --notes-file notes.md "${draft[@]}" \
             dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"
