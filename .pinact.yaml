@@ -1,0 +1,8 @@
+# pinact (https://github.com/suzuki-shunsuke/pinact) keeps every action pinned to a full commit SHA,
+# with a version comment it verifies. CI runs `pinact run --check --verify-comment`.
+version: 3
+
+# `pinact run --update` only moves to releases at least this many days old, so a compromised release
+# has time to be noticed and pulled before it's used here.
+min_age:
+  value: 30

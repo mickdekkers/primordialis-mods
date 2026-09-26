@@ -1,0 +1,147 @@
+name: Release
+
+# Pushing a version tag (e.g. `v0.2.0`) builds the mod, scans it on VirusTotal and creates the GitHub
+# release. See "Releasing" in DEVELOPMENT.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+# Never run two releases of the same tag at once, and never cancel one halfway.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Pinned, so a new Rust release can't change what's built. Update it deliberately.
+  RUSTUP_TOOLCHAIN: "1.98.1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-2025
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal
+
+      - name: Check the version and changelog
+        id: version
+        run: |
+          $package = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
+            Where-Object name -eq primordialis_qol
+          $version = $package.version
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "The tag $env:GITHUB_REF_NAME doesn't match the version in Cargo.toml ($version)."
+          }
+
+          # The changelog's section for this version becomes the release notes.
+          $section = $null
+          foreach ($line in Get-Content CHANGELOG.md) {
+            if ($line -match '^## ') {
+              if ($null -ne $section) { break }
+              if ($line -match "^## $([regex]::Escape($version))(\s|$)") { $section = @() }
+            } elseif ($null -ne $section) {
+              $section += $line
+            }
+          }
+          $notes = if ($null -ne $section) { ($section -join "`n").Trim() } else { '' }
+          if (-not $notes) { throw "CHANGELOG.md has no section '## $version' (or it's empty)." }
+
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Set-Content -Encoding utf8NoBOM dist/changelog.md $notes
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build
+        # Rust embeds source paths in the DLL, for panic messages. Those include where Cargo and rustup
+        # keep their files, in the home folder of whoever built it: map them to neutral names.
+        run: |
+          $cargoHome = $env:CARGO_HOME ?? (Join-Path $env:USERPROFILE .cargo)
+          $env:CARGO_ENCODED_RUSTFLAGS = @(
+            "--remap-path-prefix=$cargoHome=/cargo"
+            "--remap-path-prefix=$(rustup show home)=/rustup"
+            "--remap-path-prefix=$env:GITHUB_WORKSPACE=/build"
+          ) -join [char]0x1f
+          cargo build --release --locked -p primordialis_qol
+
+      - name: Check the DLL has no local paths
+        run: .github/scripts/check-paths.ps1 target/release/primordialis_qol.dll
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          Copy-Item target/release/primordialis_qol.dll dist/
+          Compress-Archive target/release/primordialis_qol.pdb "dist/primordialis_qol-$env:VERSION-debug-symbols.zip"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Scan and publish
+    needs: build
+    runs-on: ubuntu-24.04
+    # The environment holding the VirusTotal key, so that no other job can use it.
+    environment: release
+    permissions:
+      contents: write # to create the release
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/scripts
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: dist
+
+      - name: Scan on VirusTotal
+        id: scan
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: bash .github/scripts/virustotal.sh dist/primordialis_qol.dll virustotal.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLEAN: ${{ steps.scan.outputs.clean }}
+        run: |
+          sha256=$(sha256sum dist/primordialis_qol.dll | cut -d' ' -f1)
+          install="https://github.com/$GITHUB_REPOSITORY/blob/$TAG/README.md#install"
+          {
+            printf '%s\n\n' "$(cat dist/changelog.md)"
+            echo "### Install"
+            echo
+            echo "Download \`primordialis_qol.dll\` below and follow the [install steps]($install)."
+            echo "The debug symbols are only for investigating crashes."
+            echo
+            printf '%s\n\n' "$(cat virustotal.md)"
+            echo "SHA-256 of \`primordialis_qol.dll\`: \`$sha256\`"
+          } > notes.md
+
+          draft=()
+          if [[ $CLEAN != true ]]; then
+            draft=(--draft)
+            echo "::warning::Left the release as a draft: check the VirusTotal report, then publish it by hand."
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Primordialis QoL $VERSION" --notes-file notes.md "${draft[@]}" \
+            dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"
