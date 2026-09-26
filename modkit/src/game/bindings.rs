@@ -381,10 +381,14 @@ fn resolve_menu(symbols: &Symbols) -> Result<MenuBindings> {
     let render_context = symbols.layout("render_context")?;
     let font_info = symbols.layout("font_info")?;
     let text_params = symbols.layout("text_params")?;
-    // Button positions are passed as a `Real3`.
+    // Button positions are passed as a `Real3`, and the text color as a pointer to a `[f32; 4]`.
     expect(
         symbols.layout("real_3")?.size == size_of::<Real3>(),
         "real_3 size changed",
+    )?;
+    expect(
+        symbols.layout("real_4")?.size == size_of::<[f32; 4]>(),
+        "real_4 size changed",
     )?;
     expect_size(symbols, "version_string", size_of::<usize>())?;
     expect_size(symbols, "default_shadow", text_params.size)?;
