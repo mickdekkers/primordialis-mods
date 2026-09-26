@@ -12,11 +12,11 @@ use std::time::Instant;
 use windows_sys::Win32::Foundation::{HANDLE, LocalFree};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     IMAGEHLP_MODULEW64, IMAGEHLP_SYMBOL_TYPE_INFO, SYMBOL_INFOW, SYMOPT_FAIL_CRITICAL_ERRORS,
-    SYMOPT_NO_PROMPTS, SYMOPT_UNDNAME, SymCleanup, SymEnumSymbolsW, SymFromNameW,
-    SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo, SymInitializeW, SymLoadModuleExW,
-    SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN, TI_GET_BITPOSITION,
-    TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME, TI_GET_SYMTAG,
-    TI_GET_TYPEID,
+    SYMOPT_IGNORE_NT_SYMPATH, SYMOPT_NO_PROMPTS, SYMOPT_UNDNAME, SymCleanup, SymEnumSymbolsW,
+    SymFromNameW, SymGetModuleInfoW64, SymGetTypeFromNameW, SymGetTypeInfo, SymInitializeW,
+    SymLoadModuleExW, SymPdb, SymSetOptions, SymSetScopeFromAddr, TI_FINDCHILDREN,
+    TI_GET_BITPOSITION, TI_GET_CHILDRENCOUNT, TI_GET_LENGTH, TI_GET_OFFSET, TI_GET_SYMNAME,
+    TI_GET_SYMTAG, TI_GET_TYPEID,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::core::BOOL;
@@ -163,10 +163,19 @@ impl SymbolInfo {
 
 impl Symbols {
     fn open(pdb_path: &Path, base: usize, image_size: u32, codeview: &CodeView) -> Result<Self> {
+        // Search only the PDB's own directory. With no search path, DbgHelp would also use
+        // `_NT_SYMBOL_PATH`, which on a developer's PC often names a symbol server, so it could go
+        // online. The mod never should.
+        let search_path = wide(&pdb_path.parent().unwrap_or(pdb_path).to_string_lossy());
         // SAFETY: Plain DbgHelp calls with valid, NUL-terminated arguments. The session is closed in Drop.
         unsafe {
-            SymSetOptions(SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
-            if SymInitializeW(SESSION, ptr::null(), 0) == 0 {
+            SymSetOptions(
+                SYMOPT_UNDNAME
+                    | SYMOPT_FAIL_CRITICAL_ERRORS
+                    | SYMOPT_NO_PROMPTS
+                    | SYMOPT_IGNORE_NT_SYMPATH,
+            );
+            if SymInitializeW(SESSION, search_path.as_ptr(), 0) == 0 {
                 return Err("SymInitializeW failed".into());
             }
             let symbols = Symbols { base: base as u64 };
