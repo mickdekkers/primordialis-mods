@@ -243,7 +243,7 @@ impl<'a> Map<'a> {
         unsafe {
             let wall_map: WallMap = std::mem::transmute(bindings.wall_map);
             let sample = wall_map((bindings.world + bindings.map) as *const c_void, pos, true);
-            Wall::new(sample, bindings.wall_extras.is_available())
+            Wall::from(sample)
         }
     }
 }

@@ -18,10 +18,6 @@ type DrawLines = unsafe extern "C" fn(*const c_void, *const LineRenderInfo, i32)
 /// `gl_init_buffers`' code (not a symbol), taken from the current build. More lines are drawn in
 /// batches of this many.
 const MAX_LINES_PER_DRAW: usize = (0x100_0000 - 0x30) / size_of::<LineRenderInfo>();
-/// `void draw_line(render_context*, real_2 from, real_2 delta, float radius, real_4* color)`: the
-/// second point is relative to the first (`s` in `line.glsl`), and the width is given as half of it,
-/// the distance from the line's middle to its edges (which is also how far its round caps stick out).
-type DrawLine = unsafe extern "C" fn(*const c_void, Real2, Real2, f32, *const [f32; 4]);
 /// A rendering stage of `render_game`, named by the game's profiler markers (`begin_trace_stage`).
 /// Stages run one after another; a feature is told when each begins and ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -176,26 +172,6 @@ impl Frame<'_> {
                 let draw: DrawLines = std::mem::transmute(self.game.bindings.draw_lines);
                 draw(self.render_context as *const c_void, batch.as_ptr(), count);
             }
-        }
-    }
-
-    /// Draws a line between two world positions, `width` world units wide with round caps, with the
-    /// frame's camera. Panics if this game version doesn't have `draw_line` as expected, which turns
-    /// off the feature that called it.
-    pub fn draw_line(&self, from: Real2, to: Real2, width: f32, color: [f32; 4]) {
-        let address = self.game.bindings.draw_line.get();
-        let delta = Real2::new(to.x - from.x, to.y - from.y);
-        // SAFETY: The game's `draw_line`, called on the render thread with the world render context,
-        // of which it only reads the camera and resolution.
-        unsafe {
-            let draw: DrawLine = std::mem::transmute(address);
-            draw(
-                self.render_context as *const c_void,
-                from,
-                delta,
-                width / 2.0,
-                &color,
-            );
         }
     }
 }

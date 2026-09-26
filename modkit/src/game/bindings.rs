@@ -15,8 +15,8 @@ use super::types::{
 };
 use crate::{Result, log};
 
-/// Game function addresses and data locations. A binding the features use can't be missing: if it
-/// isn't found, the mod doesn't start. One no feature uses is `Optional`.
+/// Game function addresses and data locations. A binding the features can't do without must resolve,
+/// or the mod doesn't start. One they can do without is `Optional`.
 #[derive(Clone, Debug)]
 pub struct Bindings {
     pub render_game: usize,
@@ -27,11 +27,6 @@ pub struct Bindings {
     pub draw_lines: usize,
     /// `wall_t wall_map(map_t*, real_2, bool)`: the wall distance field the game's physics uses.
     pub wall_map: usize,
-    /// `draw_line(render_context*, real_2, real_2, float, real_4*)`, which shares its name with
-    /// overloads.
-    pub draw_line: Optional<usize>,
-    /// Whether `wall_t.flow` and `wall_t.air_dist` are where `WallSample` has them.
-    pub wall_extras: Optional<()>,
     /// `do_tooltip(render_context*, tooltip_t*, ...)`: draws the tooltip of a cell, mutation or body.
     pub do_tooltip: usize,
     /// `float light_value(map_t*, real_2)`: how lit the map is at a position.
@@ -114,8 +109,8 @@ pub struct Bindings {
     pub input_mouse: usize,
 }
 
-/// A binding that no feature needs in order to run. If it can't be resolved, the mod still starts,
-/// and a feature that uses it is turned off when it does.
+/// A binding the features can do without. If it can't be resolved, the mod still starts, and what
+/// needs it is left out: its accessors return `None`, or a hook isn't installed.
 #[derive(Clone, Debug)]
 pub struct Optional<T>(std::result::Result<T, String>);
 
@@ -123,28 +118,20 @@ impl<T: Copy> Optional<T> {
     fn new(name: &str, resolved: Result<T>) -> Self {
         if let Err(error) = &resolved {
             log::warn(&format!(
-                "{name} is unavailable; a feature that uses it will be turned off: {error}"
+                "{name} is unavailable, so what needs it is left out: {error}"
             ));
         }
         Optional(resolved)
     }
 
-    pub fn is_available(&self) -> bool {
+    #[cfg(test)]
+    fn is_available(&self) -> bool {
         self.0.is_ok()
     }
 
     /// The resolved value, if there is one.
     pub fn ok(&self) -> Option<T> {
         self.0.as_ref().ok().copied()
-    }
-
-    /// The resolved value. Panics if it couldn't be resolved, which turns off the feature that
-    /// called this (see `Feature`).
-    pub fn get(&self) -> T {
-        match &self.0 {
-            Ok(value) => *value,
-            Err(error) => panic!("{error}"),
-        }
     }
 }
 
@@ -239,8 +226,6 @@ impl Bindings {
             draw_circles: symbols.address("draw_circles")?,
             draw_lines: symbols.address("draw_lines")?,
             wall_map: symbols.address("wall_map")?,
-            draw_line: Optional::new("draw_line", symbols.function("draw_line", 5)),
-            wall_extras: Optional::new("wall_t.flow and air_dist", verify_wall_extras(symbols)),
             do_tooltip: symbols.function("do_tooltip", 9)?,
             light_value: Optional::new("light_value", symbols.function("light_value", 2)),
             menu: Optional::new("menu buttons", resolve_menu(symbols)),
@@ -326,8 +311,8 @@ fn verify_mirrored_layouts(symbols: &Symbols) -> Result<()> {
         && line.offset("r")? == offset_of!(LineRenderInfo, r)
         && line.offset("color")? == offset_of!(LineRenderInfo, color);
     expect(matches, "line_render_info layout changed")?;
-    // `wall_map` returns the whole struct, so its size must match; the fields are checked here as
-    // far as the features need them.
+    // `wall_map` returns the whole struct, so its size must match; the fields are checked as far as
+    // they're read.
     let wall = symbols.layout("wall_t")?;
     let matches = wall.size == size_of::<WallSample>()
         && wall.offset("dist")? == offset_of!(WallSample, dist)
@@ -405,14 +390,6 @@ fn resolve_menu(symbols: &Symbols) -> Result<MenuBindings> {
     })
 }
 
-/// The fields of `wall_t` no feature reads.
-fn verify_wall_extras(symbols: &Symbols) -> Result<()> {
-    let wall = symbols.layout("wall_t")?;
-    let matches = wall.offset("flow")? == offset_of!(WallSample, flow)
-        && wall.offset("air_dist")? == offset_of!(WallSample, air_dist);
-    expect(matches, "wall_t.flow or air_dist moved")
-}
-
 fn expect_size(symbols: &Symbols, variable: &str, size: usize) -> Result<()> {
     let actual = symbols.variable_size(variable)?;
     expect(
@@ -438,15 +415,11 @@ mod tests {
     };
 
     #[test]
-    fn a_missing_optional_binding_panics_only_when_used() {
-        let missing: Optional<usize> = Optional(Err("draw_line is gone".into()));
+    fn a_missing_optional_binding_has_no_value() {
+        let missing: Optional<usize> = Optional(Err("light_value is gone".into()));
         assert!(!missing.is_available());
-        let panic = std::panic::catch_unwind(|| missing.get()).unwrap_err();
-        assert_eq!(
-            panic.downcast_ref::<String>().map(String::as_str),
-            Some("draw_line is gone")
-        );
-        assert_eq!(Optional(Ok(7)).get(), 7);
+        assert_eq!(missing.ok(), None);
+        assert_eq!(Optional(Ok(7)).ok(), Some(7));
     }
 
     /// Resolves the bindings against a real game install, mapping the executable as an image (nothing
@@ -483,7 +456,6 @@ mod tests {
             let bindings = Bindings::resolve(&symbols).unwrap();
             println!("{exe}: base {base:#x}\n{bindings:#x?}");
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
-            assert!(bindings.draw_line.is_available() && bindings.wall_extras.is_available());
             assert!(bindings.light_value.is_available() && bindings.menu.is_available());
             assert!(bindings.save_slots.is_available() && bindings.open_menu.is_available());
             let pickup = symbols.layout("cell_pickup").unwrap();

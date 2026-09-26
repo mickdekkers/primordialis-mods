@@ -16,8 +16,9 @@ the Echolocation mutation's markers out of rock. Players install it with the gam
 - **`primordialis_qol`** (`src/`): the mod itself, which is only features implementing
   `modkit::Feature`. Feature code should stay free of `unsafe`. If a feature needs something new from
   the game, add a binding in `modkit/src/game/`: resolve it by name in `bindings.rs`, then expose it
-  through a safe accessor. A binding no feature uses yet is `Optional`: if a game update breaks it,
-  only a feature that uses it is turned off, not the whole mod.
+  through a safe accessor. A binding the features can do without is `Optional`: if a game update
+  breaks it, the mod still starts, and its accessor returns `None` (or its hook isn't installed)
+  instead of turning the whole mod off. Don't bind what no feature uses.
 - **`primordialis_qol_hot_reload`** (`hot_reload/`): a development-only host DLL that swaps in new
   mod builds while the game runs, plus `primordialis_qol_inject.exe`, which loads the host into a game
   that is already running.
