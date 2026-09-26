@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Primordialis QoL mod: shows cell pickup icons on the map in explored areas"
 license = "MIT"
+repository = "https://github.com/mickdekkers/primordialis-mods"
 publish = false
 
 [lib]

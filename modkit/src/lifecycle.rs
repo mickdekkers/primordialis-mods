@@ -26,6 +26,8 @@ pub struct Mod {
     /// For people, e.g. in the settings file.
     pub title: &'static str,
     pub version: &'static str,
+    /// Where players can read about the mod and find new versions, e.g. its repository.
+    pub homepage: &'static str,
     /// Creates the mod's features. Called once per start.
     pub features: fn() -> Vec<Box<dyn Feature>>,
 }
@@ -67,13 +69,17 @@ pub unsafe fn dll_main(
                 let dir = path.parent().ok_or("DLL path has no parent directory")?;
                 activate(prepare_in(definition, dir, false)?)
             });
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    log::error(&format!("not active, the game runs unmodified: {error}"))
-                }
-                Err(_) => log::error("not active, the game runs unmodified: panicked during setup"),
-            }
+            let error = match result {
+                Ok(Ok(())) => return TRUE,
+                Ok(Err(error)) => error,
+                Err(_) => "panicked during setup".to_owned(),
+            };
+            log::error(&format!("not active, the game runs unmodified: {error}"));
+            // Most often a game update changed something the mod relies on.
+            log::info(&format!(
+                "if the game was updated, a newer version of {} may fix this: {}",
+                definition.title, definition.homepage
+            ));
         }
         // Unloaded with `FreeLibrary` (not process exit), which only the host does, after stopping us:
         // free everything we allocated. None of our code runs anymore.
@@ -107,6 +113,7 @@ fn prepare_in(definition: &Mod, home: &Path, append_log: bool) -> Result<Prepare
     settings::init(
         &home.join(format!("{}.toml", definition.name)),
         definition.title,
+        definition.homepage,
         declared,
     )?;
 

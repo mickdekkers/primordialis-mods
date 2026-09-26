@@ -139,7 +139,12 @@ struct Watcher {
 }
 
 /// Loads `settings` from the file at `path`. Fails only if two settings have the same name.
-pub(crate) fn init(path: &Path, title: &str, settings: Vec<&'static dyn Setting>) -> Result<()> {
+pub(crate) fn init(
+    path: &Path,
+    title: &str,
+    homepage: &str,
+    settings: Vec<&'static dyn Setting>,
+) -> Result<()> {
     for (i, setting) in settings.iter().enumerate() {
         if settings[..i]
             .iter()
@@ -152,7 +157,8 @@ pub(crate) fn init(path: &Path, title: &str, settings: Vec<&'static dyn Setting>
         path: path.to_owned(),
         header: format!(
             "# {title} settings. Changes apply while the game is running.\n\
-             # Settings missing from this file are added back with their default values.\n"
+             # Settings missing from this file are added back with their default values.\n\
+             # More about the mod: {homepage}\n"
         ),
         settings,
     };

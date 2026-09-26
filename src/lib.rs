@@ -22,6 +22,7 @@ modkit::entry!(modkit::Mod {
     name: "primordialis_qol",
     title: "Primordialis QoL",
     version: env!("CARGO_PKG_VERSION"),
+    homepage: env!("CARGO_PKG_REPOSITORY"),
     features: || {
         let grid = grid_pickups::GridPickups::default();
         vec![

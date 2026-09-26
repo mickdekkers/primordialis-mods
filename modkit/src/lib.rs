@@ -49,6 +49,7 @@ static TEST_ALLOCATOR: alloc::PrivateHeap = alloc::PrivateHeap;
 ///     name: "my_mod",
 ///     title: "My mod",
 ///     version: env!("CARGO_PKG_VERSION"),
+///     homepage: env!("CARGO_PKG_REPOSITORY"),
 ///     features: || vec![Box::new(MyFeature::default())],
 /// });
 /// ```
