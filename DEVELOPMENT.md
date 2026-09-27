@@ -62,8 +62,8 @@ themselves.
 
 | Crate | What it is |
 |---|---|
-| `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons (with `spread.rs` laying out the grid, `fades.rs`, `leaders.rs`, `combo.rs` and `tooltip.rs`), `hide_duplicates.rs` hides what the map already shows, `echolocation.rs` fixes the Echolocation markers, and `settle.rs` (shared) works out where pickups end up. `grid_pickups.rs` shares the pickups on the grid between the features. |
-| `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing), resolved from the game's symbols. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings and logging. |
+| `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons of the cells `found_cells/` says the player has found (with `spread/` laying out the grid, `fades.rs`, `leaders.rs` and `combo.rs`), `hide_duplicates.rs` hides what the map already shows, `echolocation.rs` fixes the Echolocation markers, and `menu_version.rs` shows the mod's version in the menus. Shared between them: `settle.rs` caches where pickups end up, `grid_pickups.rs` holds the pickups on the grid, `pickup_edits.rs` undoes changes to pickups, and `math.rs` has easing and timing. |
+| `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing, menus and tooltips), resolved from the game's symbols, and the values copied from the game's code. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings, logging, and the files kept next to the DLL. |
 | `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
 | `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only, never released). |
 
