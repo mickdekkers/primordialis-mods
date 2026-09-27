@@ -3,11 +3,11 @@
 //! pickups are moved while the markers are drawn, and moved back right after.
 
 use modkit::Feature;
-use modkit::game::{Frame, Game, PickupsId, Real2, Stage};
-use modkit::log;
+use modkit::game::{Frame, Game, Real2, Stage};
 use modkit::settings::{Setting, Toggle};
 
 use crate::grid_pickups::GridPickups;
+use crate::pickup_edits::PickupEdits;
 use crate::settle::SettledPositions;
 
 static FIX_ECHOLOCATION_POSITIONS: Toggle = Toggle::new(
@@ -23,17 +23,8 @@ const OUT_OF_RANGE: Real2 = Real2::new(f32::MAX, f32::MAX);
 pub struct EcholocationFix {
     grid: GridPickups,
     settled: SettledPositions,
-    moved: Moved,
-    logged_unrestored: bool,
-}
-
-/// Pickups moved for the markers, to be moved back.
-#[derive(Default)]
-struct Moved {
-    /// The pickup array they were moved in.
-    pickups: Option<PickupsId>,
-    /// Index of each moved pickup, its original position, and what we wrote.
-    positions: Vec<(usize, Real2, Real2)>,
+    /// The positions of the pickups moved for the markers, to be moved back.
+    moved: PickupEdits<Real2>,
 }
 
 impl Feature for EcholocationFix {
@@ -68,8 +59,7 @@ impl EcholocationFix {
         EcholocationFix {
             grid,
             settled: SettledPositions::default(),
-            moved: Moved::default(),
-            logged_unrestored: false,
+            moved: PickupEdits::default(),
         }
     }
 
@@ -81,8 +71,8 @@ impl EcholocationFix {
         self.settled.refresh(game);
         let (pickups, map) = (game.pickups(), game.map());
         let fix_positions = FIX_ECHOLOCATION_POSITIONS.get();
-        self.moved.pickups = Some(pickups.id());
-        let moved = &mut self.moved.positions;
+        let moved = &mut self.moved;
+        moved.begin(pickups.id());
         let settled = &mut self.settled;
         self.grid.read(pickups.id(), |on_grid| {
             for (index, pickup) in pickups.iter().enumerate() {
@@ -96,7 +86,7 @@ impl EcholocationFix {
                 };
                 if !to.same_bits(original) {
                     pickup.set_position(to);
-                    moved.push((index, original, to));
+                    moved.record(index, original, to);
                 }
             }
         });
@@ -104,32 +94,24 @@ impl EcholocationFix {
 
     /// Moves the pickups back, logging (once) if the pickups changed in between.
     fn restore_pickups(&mut self, game: &Game) {
-        if !self.put_back(game) && !self.logged_unrestored {
-            self.logged_unrestored = true;
-            log::warn(
+        if !self.put_back(game) {
+            self.moved.warn_once(
                 "pickups changed while moved for Echolocation; moved back those still where they were \
                  moved to",
             );
         }
     }
 
-    /// Moves the pickups back. Returns false if the pickup array changed in between.
+    /// Moves the pickups back (those still where they were moved to, see `PickupEdits`). Returns
+    /// false if the pickup array changed in between.
     fn put_back(&mut self, game: &Game) -> bool {
-        if self.moved.positions.is_empty() {
-            return true;
-        }
         let pickups = game.pickups();
-        // Nothing should change the pickups in between. If something did, an index may now refer to
-        // another pickup, so only a pickup still exactly where it was moved to is moved back. Leaving
-        // them all instead would leave those moved out of range there for good.
-        for &(index, original, written) in &self.moved.positions {
-            if let Some(pickup) = pickups.get(index)
-                && pickup.position().same_bits(written)
-            {
-                pickup.set_position(original);
+        let position = |index| Some(pickups.get(index)?.position());
+        let set_position = |index, position| {
+            if let Some(pickup) = pickups.get(index) {
+                pickup.set_position(position);
             }
-        }
-        self.moved.positions.clear();
-        self.moved.pickups == Some(pickups.id())
+        };
+        self.moved.undo(pickups.id(), position, set_position)
     }
 }

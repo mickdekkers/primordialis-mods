@@ -17,6 +17,7 @@ mod leaders;
 mod map_icons;
 mod math;
 mod menu_version;
+mod pickup_edits;
 mod settle;
 mod spread;
 

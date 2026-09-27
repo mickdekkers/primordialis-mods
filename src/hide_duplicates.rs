@@ -4,29 +4,20 @@
 //! isn't shown.
 
 use modkit::Feature;
-use modkit::game::{Frame, Game, PickupsId, Stage};
-use modkit::log;
+use modkit::game::{Frame, Game, Stage};
 
 use crate::grid_pickups::GridPickups;
 use crate::map_icons::SHOW_TOOLTIPS;
+use crate::pickup_edits::PickupEdits;
 
 pub struct HideDuplicates {
     /// The pickups whose map icons are on the grid, shared by the map icons.
     grid: GridPickups,
-    hidden: Hidden,
+    /// The opacity of the pickups on the grid hidden in the world, to be shown again.
+    hidden: PickupEdits<f32>,
     /// Whether the game's tooltip for the pickup under the mouse in the world was active, and its
     /// opacity, while it's hidden.
     hidden_world_tooltip: Option<(bool, f32)>,
-    logged_unrestored: bool,
-}
-
-/// Pickups on the grid hidden in the world, to be shown again.
-#[derive(Default)]
-struct Hidden {
-    /// The pickup array they were hidden in.
-    pickups: Option<PickupsId>,
-    /// Index of each hidden pickup, and its opacity.
-    alphas: Vec<(usize, f32)>,
 }
 
 impl Feature for HideDuplicates {
@@ -61,9 +52,8 @@ impl HideDuplicates {
     pub fn new(grid: GridPickups) -> Self {
         HideDuplicates {
             grid,
-            hidden: Hidden::default(),
+            hidden: PickupEdits::default(),
             hidden_world_tooltip: None,
-            logged_unrestored: false,
         }
     }
 
@@ -77,11 +67,11 @@ impl HideDuplicates {
         }
         let pickups = game.pickups();
         let hidden = &mut self.hidden;
-        hidden.pickups = Some(pickups.id());
+        hidden.begin(pickups.id());
         self.grid.read(pickups.id(), |on_grid| {
             for &index in on_grid {
                 if let Some(pickup) = pickups.get(index) {
-                    hidden.alphas.push((index, pickup.alpha()));
+                    hidden.record(index, pickup.alpha(), 0.0);
                     pickup.set_alpha(0.0);
                 }
             }
@@ -90,31 +80,23 @@ impl HideDuplicates {
 
     /// Shows the pickups hidden in the world again, logging (once) if the pickups changed in between.
     fn restore_in_world(&mut self, game: &Game) {
-        if !self.show_in_world(game) && !self.logged_unrestored {
-            self.logged_unrestored = true;
-            log::warn("pickups changed while hidden in the world; showed those still hidden");
+        if !self.show_in_world(game) {
+            self.hidden
+                .warn_once("pickups changed while hidden in the world; showed those still hidden");
         }
     }
 
-    /// Shows the pickups hidden in the world again. Returns false if the pickup array changed in
-    /// between.
+    /// Shows the pickups hidden in the world again (those still hidden, see `PickupEdits`). Returns
+    /// false if the pickup array changed in between.
     fn show_in_world(&mut self, game: &Game) -> bool {
-        if self.hidden.alphas.is_empty() {
-            return true;
-        }
         let pickups = game.pickups();
-        // Nothing should change the pickups in between. If something did, an index may now refer to
-        // another pickup, so only a pickup still hidden is shown again. Leaving them all instead would
-        // leave them hidden for good.
-        for &(index, alpha) in &self.hidden.alphas {
-            if let Some(pickup) = pickups.get(index)
-                && pickup.alpha().to_bits() == 0f32.to_bits()
-            {
+        let alpha = |index| Some(pickups.get(index)?.alpha());
+        let set_alpha = |index, alpha| {
+            if let Some(pickup) = pickups.get(index) {
                 pickup.set_alpha(alpha);
             }
-        }
-        self.hidden.alphas.clear();
-        self.hidden.pickups == Some(pickups.id())
+        };
+        self.hidden.undo(pickups.id(), alpha, set_alpha)
     }
 
     /// While the map is open and shows tooltips, keeps the game from drawing its tooltip for the
