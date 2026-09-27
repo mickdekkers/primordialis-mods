@@ -57,9 +57,9 @@ it feels like part of the game.
 To update, close the game and replace `primordialis_qol.dll` with the new one.
 
 The mod keeps a few files of its own in the game folder: its settings (`primordialis_qol.toml`), a log
-(`primordialis_qol.log`), the cells you've found in your current run and sandbox
-(`primordialis_qol_detected.bin`), and a `primordialis_qol_cache` folder (about 10 MB) with the debug
-information it reads from the game.
+(`primordialis_qol.log`, and the one from the time before in `primordialis_qol.log.bak`), the cells
+you've found in your current run and sandbox (`primordialis_qol_detected.bin`), and a
+`primordialis_qol_cache` folder (about 10 MB) with the debug information it reads from the game.
 
 ## Is it safe?
 
@@ -106,14 +106,16 @@ in the game folder:
 - **There's a log:** its last lines say what went wrong. If it says the mod is "not active" after a game
   update, the mod needs an update too: check for a [new release](../../releases).
 
-**Reporting a problem.** Please [open an issue](../../issues) and attach `primordialis_qol.log`. The log
-shows where your game is installed, but nothing else about you or your PC.
+**Reporting a problem.** Please [open an issue](../../issues) and attach `primordialis_qol.log`. If
+you've started the game again since (after a crash, say), attach `primordialis_qol.log.bak` instead:
+each start moves the last log there. The log shows where your game is installed, but nothing else
+about you or your PC.
 
 ## Uninstall
 
 Remove the launch option. You can then delete `primordialis_qol.dll`, `primordialis_qol.toml`,
-`primordialis_qol.log`, `primordialis_qol_detected.bin` and the `primordialis_qol_cache` folder from
-the game folder.
+`primordialis_qol.log`, `primordialis_qol.log.bak`, `primordialis_qol_detected.bin` and the
+`primordialis_qol_cache` folder from the game folder.
 
 ## Compatibility
 

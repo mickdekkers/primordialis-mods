@@ -67,7 +67,7 @@ pub unsafe fn dll_main(
             let result = panic::catch_unwind(|| {
                 let path = module::path(module)?;
                 let dir = path.parent().ok_or("DLL path has no parent directory")?;
-                activate(prepare_in(definition, dir, false)?)
+                activate(prepare_in(definition, dir)?)
             });
             let error = match result {
                 Ok(Ok(())) => return TRUE,
@@ -94,8 +94,8 @@ pub unsafe fn dll_main(
 
 /// Everything that doesn't change the game: settings, and finding what to hook. `home` holds the log,
 /// settings and symbol cache.
-fn prepare_in(definition: &Mod, home: &Path, append_log: bool) -> Result<Prepared> {
-    log::init(&home.join(format!("{}.log", definition.name)), append_log);
+fn prepare_in(definition: &Mod, home: &Path) -> Result<Prepared> {
+    log::init(&home.join(format!("{}.log", definition.name)));
     let location = module::own()
         .and_then(module::path)
         .map(|path| path.display().to_string());
@@ -166,7 +166,7 @@ pub unsafe fn prepare(definition: &'static Mod, home_dir: *const u16, home_dir_l
         if RUNNING.load(Ordering::SeqCst) {
             return Err("already running".to_owned());
         }
-        prepare_in(definition, &home, true)
+        prepare_in(definition, &home)
     });
     let error = match result {
         Ok(Ok(prepared)) => {

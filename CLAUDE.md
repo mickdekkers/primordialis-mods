@@ -114,8 +114,9 @@ These keep hooking and unloading safe while the game runs:
   must keep each file's line endings (in Python on Windows, open files with `newline=''`).
 - The game comes in AVX and SSE3 builds (`primordialis_avx.exe`, `primordialis_sse3.exe`).
 - **Logs** go next to the DLL: `primordialis_qol.log` for the mod, `primordialis_qol_hot_reload.log`
-  for the host. Settings are in `primordialis_qol.toml`, symbols are cached in
-  `primordialis_qol_cache/`.
+  for the host. Each game process starts a new mod log and keeps the previous one as
+  `primordialis_qol.log.bak`; builds the host swaps in append to it. Settings are in
+  `primordialis_qol.toml`, symbols are cached in `primordialis_qol_cache/`.
 - With the hot reload host loaded (see `DEVELOPMENT.md`), every `cargo build --release` of the mod is
   swapped into the running game, so build once the edits are complete. `cargo check`, `clippy` and
   `test` don't write the DLL.
