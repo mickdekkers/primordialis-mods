@@ -76,6 +76,8 @@ impl FrameState {
 thread_local! {
     // No destructors, so nothing is left behind on the game's threads when the mod is unloaded.
     static FRAME: Cell<FrameState> = const { Cell::new(FrameState::NONE) };
+    /// Set while this thread is inside `render_game`, whether or not it gave both render contexts.
+    static IN_RENDER_GAME: Cell<bool> = const { Cell::new(false) };
     /// Set while features are called on this thread. A stage the game begins meanwhile (in a game
     /// function a feature called) is nested in the current one: it doesn't end the current stage,
     /// which would then never get its `stage_end`, and isn't reported itself.
@@ -192,8 +194,10 @@ extern "C" fn render_game(
         }
     };
     let previous = FRAME.replace(frame);
+    let was_in_render_game = IN_RENDER_GAME.replace(true);
     // SAFETY: Forwards the game's own arguments to the original function.
     unsafe { ORIGINAL_RENDER_GAME.get()(world_rc, ui_rc, input, recording, dt, window) };
+    IN_RENDER_GAME.set(was_in_render_game);
     let frame = FRAME.replace(previous);
     end_stage(frame);
 }
@@ -234,11 +238,15 @@ extern "C" fn do_text_button(
 ) -> u32 {
     let _in_flight = InFlight::enter();
     let original = ORIGINAL_DO_TEXT_BUTTON.get();
-    // Only hooked if the menu bindings resolved. A button drawn by something a feature called isn't
-    // passed to the features again.
+    // Only hooked if the menu bindings resolved. Features only get buttons drawn inside
+    // `render_game`, where they may use the game's state, and not one drawn by something a feature
+    // called.
     let menu = running().bindings.menu.ok();
-    let usable =
-        !DISPATCHING.get() && !render_context.is_null() && !position.is_null() && !text.is_null();
+    let usable = IN_RENDER_GAME.get()
+        && !DISPATCHING.get()
+        && !render_context.is_null()
+        && !position.is_null()
+        && !text.is_null();
     let Some(menu) = menu.filter(|_| usable) else {
         // SAFETY: Forwards the game's own arguments to the original function.
         return unsafe { original(render_context, input, position, half_size, text) };
@@ -267,8 +275,8 @@ fn dispatch_menu_button(button: &mut MenuButton) {
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
         Err(TryLockError::WouldBlock) => return,
     };
-    // SAFETY: The main and pause menus are drawn by `do_pause_menu`, which only `render_game` calls:
-    // this is the render thread inside `render_game`. It's only used to revert a feature that panics.
+    // SAFETY: `do_text_button` only dispatches inside `render_game` on this thread, where the render
+    // thread has the game's state to itself. It's only used to revert a feature that panics.
     let game = unsafe { Game::new(&running.bindings) };
     // `each` catches the features' panics, so this is always reset.
     DISPATCHING.set(true);
