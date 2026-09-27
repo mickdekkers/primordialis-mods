@@ -9,11 +9,13 @@
 //! features can keep them from showing up twice.
 
 use modkit::Feature;
-use modkit::game::{CircleRenderInfo, Frame, Game, IconRenderInfo, LineRenderInfo, Real2, Stage};
+use modkit::game::{
+    CircleRenderInfo, Frame, Game, IconRenderInfo, LineRenderInfo, PickupTooltip, Real2, Stage,
+};
 use modkit::log;
 use modkit::settings::{Setting, Toggle};
 
-use crate::combo::{HALO_ALPHA, Halo, combo_color};
+use crate::combo::{HALO_ALPHA, Halo};
 use crate::fades::Fades;
 use crate::found_cells::FoundCells;
 use crate::grid_pickups::GridPickups;
@@ -21,7 +23,6 @@ use crate::leaders::Leader;
 use crate::math;
 use crate::settle::SettledPositions;
 use crate::spread::{self, Spread};
-use crate::tooltip::Tooltip;
 
 static FIX_ICON_POSITIONS: Toggle = Toggle::new(
     "fix_icon_positions",
@@ -73,7 +74,7 @@ pub struct MapIcons {
     /// The pickups on the grid, shared with the features that hide them elsewhere.
     grid: GridPickups,
     fades: Fades,
-    tooltip: Tooltip,
+    tooltip: PickupTooltip,
     logged_first_draw: bool,
 }
 
@@ -193,7 +194,7 @@ impl MapIcons {
         if SHOW_TOOLTIPS.get() {
             let pointed =
                 hovered.and_then(|icon| Some((pickups.get(self.pickups[icon])?, self.shown[icon])));
-            self.tooltip.draw(frame, pointed);
+            frame.draw_pickup_tooltip(&mut self.tooltip, pointed);
         } else {
             self.tooltip.hide();
         }
@@ -204,7 +205,7 @@ impl MapIcons {
     fn collect(&mut self, game: &Game) -> usize {
         let fade = game.map_fade();
         let frame_number = game.frame_number();
-        let combo_rgb = combo_color(frame_number);
+        let combo_rgb = game.combo_color();
         let (pickups, map) = (game.pickups(), game.map());
         let fix_positions = FIX_ICON_POSITIONS.get();
         self.pickups.clear();

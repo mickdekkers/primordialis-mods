@@ -168,7 +168,7 @@ pub(crate) struct WallSample {
 
 /// A sample of the wall distance field (the game's `wall_t`).
 #[derive(Clone, Copy, Debug)]
-pub struct Wall {
+pub(crate) struct Wall {
     /// Distance to the nearest wall surface: negative inside a wall.
     pub dist: f32,
     /// Unit direction away from the wall.

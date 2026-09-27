@@ -23,7 +23,7 @@ use std::ptr;
 pub use menu::MenuButton;
 pub use render::{Camera, Frame, Stage};
 pub use tooltip::{PickupTooltip, WorldTooltip};
-pub use types::{CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4, Wall};
+pub use types::{CircleRenderInfo, IconRenderInfo, LineRenderInfo, Real2, Real4x4};
 pub use world::{Map, MapId, Material, Pickup, Pickups, PickupsId};
 
 use bindings::Bindings;

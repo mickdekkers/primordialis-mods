@@ -1,24 +1,16 @@
-//! How combo pickups look on the map: the game's shifting combo color, and a ring of rainbow dots
-//! standing in for the particle ring the game shows around them in the world, which only exists near
-//! the player.
+//! The ring of rainbow dots drawn around combo pickups on the map, standing in for the particle ring
+//! the game shows around them in the world, which only exists near the player. (Their shifting color
+//! is the game's: `Game::combo_color`.)
 
 use modkit::game::{CircleRenderInfo, Real2};
-
-/// Combo pickups don't use their material's color: the game cycles them through a dim rainbow,
-/// `COMBO_BASE + COMBO_AMPLITUDE * cos(frame_number * COMBO_SPEED + phase)` for red, green and blue,
-/// with green and blue phase-shifted by 2/3 and 1/3 of a cycle. These are constants in
-/// `render_game`'s code (not symbols), taken from the current build.
-const COMBO_BASE: f32 = 0.35;
-const COMBO_AMPLITUDE: f32 = 0.05;
-/// Radians per `frame_number` tick. Angles from the frame number are worked out in `f64`: an `f32`
-/// only holds tick counts exactly up to 2^24 (39 hours of play), after which they'd move in steps.
-const COMBO_SPEED: f64 = 0.02;
 
 /// The ring of dots around combo pickups, in multiples of the icon radius.
 const HALO_RADIUS: f32 = 1.7;
 const HALO_DOT_RADIUS: f32 = 0.14;
 const HALO_DOTS: usize = 16;
 /// Clockwise ring rotation, in radians per `frame_number` tick (120 per second): ~20 s per turn.
+/// Angles from the frame number are worked out in `f64`: an `f32` only holds tick counts exactly up
+/// to 2^24 (39 hours of play), after which they'd move in steps.
 const HALO_SPIN: f64 = 0.00265;
 /// Dot opacity relative to the icon's.
 pub(crate) const HALO_ALPHA: f32 = 0.9;
@@ -74,14 +66,6 @@ fn rainbow(t: f32) -> [f32; 3] {
         .map(|phase| RAINBOW_BASE + RAINBOW_AMPLITUDE * ((t + phase) * TAU).cos())
 }
 
-/// The color the game gives combo pickups on a given frame.
-pub(crate) fn combo_color(frame_number: i32) -> [f32; 3] {
-    use std::f64::consts::TAU;
-    let t = f64::from(frame_number) * COMBO_SPEED;
-    [0.0, 2.0 / 3.0, 1.0 / 3.0]
-        .map(|phase| COMBO_BASE + COMBO_AMPLITUDE * ((t + phase * TAU) % TAU).cos() as f32)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,7 +91,7 @@ mod tests {
     }
 
     #[test]
-    fn frame_number_animations_keep_moving_every_tick_late_in_the_game() {
+    fn the_halo_keeps_turning_every_tick_late_in_the_game() {
         let halo_angle = |frame_number| {
             let mut circles = Vec::new();
             Halo::new(frame_number, 1.0).add(&mut circles, Real2::default(), 1.0);
@@ -120,26 +104,6 @@ mod tests {
                 (turned - HALO_SPIN as f32).abs() < 1e-4,
                 "{frame_number}: {turned}"
             );
-            let (now, next) = (combo_color(frame_number), combo_color(frame_number + 1));
-            assert!(now != next, "{frame_number}");
         }
-    }
-
-    #[test]
-    fn combo_colors_cycle_within_the_games_range() {
-        let period = std::f64::consts::TAU / COMBO_SPEED;
-        for frame_number in (0..2000).step_by(7) {
-            let color = combo_color(frame_number);
-            for channel in color {
-                assert!(
-                    (COMBO_BASE - COMBO_AMPLITUDE - 1e-6..=COMBO_BASE + COMBO_AMPLITUDE + 1e-6)
-                        .contains(&channel)
-                );
-            }
-        }
-        let red = combo_color(0)[0];
-        assert!((red - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-6);
-        let half_cycle = combo_color((period / 2.0).round() as i32)[0];
-        assert!((half_cycle - (COMBO_BASE - COMBO_AMPLITUDE)).abs() < 1e-4);
     }
 }

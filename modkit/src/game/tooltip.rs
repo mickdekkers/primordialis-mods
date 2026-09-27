@@ -31,41 +31,80 @@ const TYPE_CELL: i32 = 0;
 const PICKUP_ANCHOR_MODE: i32 = 1;
 const PICKUP_INSTANT_SLIDE: bool = true;
 const PICKUP_PREVIEW: bool = true;
+/// The game slides the tooltip towards the pickup it's for at this rate (the share of the way left
+/// per second, exponentially), and points it this many UI units above the pickup's center. These are
+/// constants in `render_game`'s code (not symbols), taken from the current build.
+const SLIDE_RATE: f32 = 10.0;
+const ANCHOR_ABOVE: f32 = 0.1;
 
 /// A cell pickup's tooltip as the game draws it for the pickup under the mouse in the world: the
 /// cell's name, description, cost and genome size, and what picking it up would change. Holds what
-/// the game animates from one frame to the next (fading in and out, the box growing to fit), so
-/// keep one per tooltip, and draw it with `Frame::draw_pickup_tooltip`.
+/// the game animates from one frame to the next (fading in and out, the box growing to fit, sliding
+/// to the next pickup), so keep one per tooltip, and draw it with `Frame::draw_pickup_tooltip`.
 #[derive(Default)]
-pub struct PickupTooltip(TooltipState);
+pub struct PickupTooltip {
+    state: TooltipState,
+    /// Where it points, in world units: sliding towards the pickup it's for.
+    anchor: Real2,
+}
 
 impl PickupTooltip {
     /// Whether it's showing, or still fading out.
     pub fn is_visible(&self) -> bool {
-        self.0.alpha > 0.0
+        self.state.alpha > 0.0
     }
 
     /// Hides it at once. It fades in from nothing the next time it's shown.
     pub fn hide(&mut self) {
-        self.0 = TooltipState::default();
+        self.state = TooltipState::default();
     }
 }
 
 impl Frame<'_> {
-    /// Draws `tooltip` into the UI, the way the game draws the tooltip of the pickup under the
-    /// mouse in the world, pointing at `anchor` (in UI units, see `mouse`). Call it every frame while
-    /// the tooltip may be visible: with the pickup it's for to show it, or `None` to fade it out
-    /// (still showing the last pickup's cell). The game's other tooltips draw in the same framebuffer
-    /// as the menus: draw it from the `menus` stage, or one that draws the UI.
+    /// Draws `tooltip` into the UI, the way the game draws the tooltip of the pickup under the mouse
+    /// in the world: pointing just above where the pickup is shown (in world units), and sliding
+    /// there from the last one. Call it every frame while the tooltip may be visible: with the pickup
+    /// it's for and where it's shown, or `None` to fade it out (still showing the last pickup's
+    /// cell). The game's other tooltips draw in the same framebuffer as the menus: draw it from the
+    /// `menus` stage, or one that draws the UI.
     pub fn draw_pickup_tooltip(
         &self,
         tooltip: &mut PickupTooltip,
-        pickup: Option<Pickup>,
-        anchor: Real2,
+        pointed: Option<(Pickup, Real2)>,
     ) {
+        if let Some((_, at)) = pointed {
+            tooltip.anchor = if tooltip.is_visible() {
+                // With `dt`, not `frame_number`, as the game does: the UI animates while the game is
+                // paused too.
+                let stay = (-SLIDE_RATE * self.dt()).exp();
+                Real2::new(
+                    at.x + (tooltip.anchor.x - at.x) * stay,
+                    at.y + (tooltip.anchor.y - at.y) * stay,
+                )
+            } else {
+                at
+            };
+        }
+        // From the map, through the world camera to the screen, then back through the UI camera.
+        let anchor = self
+            .camera()
+            .project(tooltip.anchor)
+            .and_then(|ndc| self.ui_camera().unproject(ndc));
+        match anchor {
+            Some(anchor) => self.draw_tooltip_at(
+                tooltip,
+                pointed.map(|(pickup, _)| pickup),
+                Real2::new(anchor.x, anchor.y + ANCHOR_ABOVE),
+            ),
+            None => tooltip.hide(),
+        }
+    }
+
+    /// Draws `tooltip` pointing at `anchor`, in UI units (see `mouse`), for `pickup`, or fading out.
+    fn draw_tooltip_at(&self, tooltip: &mut PickupTooltip, pickup: Option<Pickup>, anchor: Real2) {
         let game = self.game();
         let visible = tooltip.is_visible();
-        let state = &mut tooltip.0;
+        let state = &mut tooltip.state;
         if let Some(pickup) = pickup {
             if !visible {
                 // As the game does: grow the box from nothing.

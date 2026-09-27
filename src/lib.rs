@@ -19,7 +19,6 @@ mod math;
 mod menu_version;
 mod settle;
 mod spread;
-mod tooltip;
 
 modkit::entry!(modkit::Mod {
     name: "primordialis_qol",

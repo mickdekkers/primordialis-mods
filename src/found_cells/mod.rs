@@ -16,8 +16,6 @@ use rustc_hash::FxHashMap;
 use crate::math;
 use store::{Cell, Run, Slot, Store};
 
-/// The light (`Map::light_at`) of most of the map. Dark areas are 0 until something lights them up.
-const NORMAL_LIGHT: f32 = 0.5;
 /// How close the player has to get to a cell in total darkness to find it, in world units. Our
 /// choice, tuned by eye.
 const DARK_REACH: f32 = 400.0;
@@ -49,7 +47,7 @@ const RESAVE_DISTANCE: f32 = MATCH_DISTANCE / 5.0;
 /// `DARK_REACH` in total darkness.
 fn reach(light: f32, vision: f32) -> f32 {
     let dark = DARK_REACH.min(vision);
-    dark + (vision - dark) * (light / NORMAL_LIGHT).clamp(0.0, 1.0)
+    dark + (vision - dark) * (light / Map::NORMAL_LIGHT).clamp(0.0, 1.0)
 }
 
 /// A pickup whose cell was found, by its index in the current pickup array.
@@ -267,7 +265,7 @@ impl FoundCells {
             // The light only matters within sight. If this version of the game can't tell, it counts
             // as normal.
             let near = distance <= vision
-                && distance <= reach(map.light_at(position).unwrap_or(NORMAL_LIGHT), vision);
+                && distance <= reach(map.light_at(position).unwrap_or(Map::NORMAL_LIGHT), vision);
             if let Some(material) = pickup.material().filter(|_| near) {
                 self.indices.insert(index, Some(frame_number));
                 self.tracked.push(Tracked {
@@ -350,7 +348,7 @@ mod tests {
         let vision = 1000.0;
         assert_eq!(reach(0.0, vision), DARK_REACH);
         assert!(reach(0.3, vision) > reach(0.1, vision) && reach(0.3, vision) < vision);
-        assert_eq!(reach(NORMAL_LIGHT, vision), vision);
+        assert_eq!(reach(Map::NORMAL_LIGHT, vision), vision);
         assert_eq!(reach(1.0, vision), vision);
         // Never further than the player sees, even in the dark.
         assert_eq!(reach(0.0, 300.0), 300.0);
