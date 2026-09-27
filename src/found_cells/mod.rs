@@ -99,6 +99,9 @@ pub struct FoundCells {
     /// Whether the cells changed since they were last saved, and when that was.
     dirty: bool,
     saved: Option<Instant>,
+    /// Whether one of the game's menus was open last frame: the cells are saved as soon as one opens,
+    /// since quitting the game goes through a menu, and nothing saves them on the way out.
+    menu_open: bool,
 }
 
 impl FoundCells {
@@ -134,7 +137,13 @@ impl FoundCells {
             self.dirty = true;
         }
         self.find(game, &map, &pickups);
-        self.save_if_due();
+        let menu_open = game.menu_open();
+        if menu_open && !self.menu_open {
+            self.save();
+        } else {
+            self.save_if_due();
+        }
+        self.menu_open = menu_open;
     }
 
     /// How visible the icon of the pickup at `index` is at `frame_number`: not at all until the player
@@ -303,6 +312,15 @@ impl FoundCells {
     }
 }
 
+/// Saves what's unsaved when the mod is unloaded, as the hot reload host does to swap builds: the
+/// features are dropped once the hooks are removed and the game's threads run again. When the game
+/// exits nothing is dropped, which is why they're also saved as a menu opens.
+impl Drop for FoundCells {
+    fn drop(&mut self) {
+        self.save();
+    }
+}
+
 /// How far a found cell's icon has faded in, `ticks` after it was found. A frame number that went
 /// back (it's the game's, not ours) counts as long ago, so no icon stays hidden.
 fn fade_in(ticks: i32) -> f32 {
@@ -371,10 +389,8 @@ mod tests {
 
     /// Cells as the file gives them, matched with `pickups`.
     fn loaded(cells: &[Cell], pickups: &[Candidate]) -> FoundCells {
-        let mut found = FoundCells {
-            pending: cells.to_vec(),
-            ..FoundCells::default()
-        };
+        let mut found = FoundCells::default();
+        found.pending = cells.to_vec();
         rematch(&mut found, 0x1000, pickups);
         found
     }
