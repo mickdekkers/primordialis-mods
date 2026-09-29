@@ -40,10 +40,12 @@ if [[ -z $analysis ]]; then
 fi
 echo "Uploaded $name ($sha256), analysis $analysis"
 
-# Scans usually take a few minutes; give up after 20.
+# Scans usually take a few minutes, but a new file can wait in VirusTotal's queue for longer than 20
+# (v0.2.4's did). Give up after an hour, checking twice a minute: well within the public API's
+# limits of 4 requests a minute and 500 a day.
 status=
-for _ in $(seq 60); do
-  sleep 20
+for _ in $(seq 120); do
+  sleep 30
   result=$(vt "$api/analyses/$analysis") || continue
   status=$(jq -r '.data.attributes.status' <<<"$result")
   echo "Scan status: $status"
