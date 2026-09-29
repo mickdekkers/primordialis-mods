@@ -78,7 +78,10 @@ you've found in your current run and sandbox (`primordialis_qol_detected.bin`), 
 - **You can check what you download.** The mod is open source. Each release is built by GitHub from the
   code in this repository, not on anyone's PC, and scanned by the antivirus engines on VirusTotal. The
   badge at the top of this page and the release notes show the result and link to the full report, and
-  the release notes list the file's SHA-256 checksum.
+  the release notes list the file's SHA-256 checksum. GitHub also keeps a signed record (an
+  [attestation](../../attestations)) that the DLL was built by this repository's release workflow. With
+  GitHub's [`gh`](https://cli.github.com) tool, `gh attestation verify primordialis_qol.dll --repo
+  mickdekkers/primordialis-mods` checks the file you downloaded against it.
 
 The mod works by hooking into the game's code while it runs, which some antivirus programs are wary of,
 so one may occasionally flag it. The VirusTotal report for each release shows which engines, if any, did.

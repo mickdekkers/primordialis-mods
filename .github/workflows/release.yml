@@ -153,6 +153,9 @@ jobs:
     environment: release
     permissions:
       contents: write # to create the tag and the release
+      # Attesting the DLL happens in this job, not the build, which runs the dependencies' build scripts.
+      id-token: write # to get the Sigstore certificate that signs the DLL's attestation
+      attestations: write # to store the attestation with the repository
     env:
       VERSION: ${{ needs.build.outputs.version }}
       COMMIT: ${{ needs.build.outputs.commit }}
@@ -217,6 +220,15 @@ jobs:
             commit --quiet --amend --no-edit README.md
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # A signed record that this workflow built the DLL from this repository, which anyone can check a
+      # download against with `gh attestation verify`. Made before main moves, so if it fails, nothing
+      # is released.
+      - name: Attest the DLL's build provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/primordialis_qol.dll
+
       # GitHub makes the commit from the same changes, so that it's signed. Only a fast-forward: if main
       # moved since the build started, this fails and nothing is released.
       - name: Push the release commit
@@ -231,6 +243,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CLEAN: ${{ steps.scan.outputs.clean }}
           RELEASE_COMMIT: ${{ steps.push.outputs.commit }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
         run: |
           tag="v$VERSION"
           sha256=$(sha256sum dist/primordialis_qol.dll | cut -d' ' -f1)
@@ -244,6 +257,10 @@ jobs:
             echo
             printf '%s\n\n' "$(cat virustotal.md)"
             echo "SHA-256 of \`primordialis_qol.dll\`: \`$sha256\`"
+            echo
+            echo "GitHub's [build attestation]($ATTESTATION_URL) records that this repository's release workflow"
+            echo "built \`primordialis_qol.dll\`. Check a download against it with"
+            echo "\`gh attestation verify primordialis_qol.dll --repo $GITHUB_REPOSITORY\`."
           } > notes.md
 
           draft=()
