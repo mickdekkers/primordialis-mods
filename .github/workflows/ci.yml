@@ -94,8 +94,11 @@ jobs:
         run: zizmor --persona=pedantic --format=github .
 
       # The recorded changes can be batched into a release (a bad kind or a malformed fragment would
-      # otherwise only fail the release), and CHANGELOG.md is what changie makes of them.
+      # otherwise only fail the release), and CHANGELOG.md is what changie makes of them. Right after a
+      # release there's nothing to batch, which changie treats as an error.
       - name: changie
         run: |
-          changie batch auto --dry-run > /dev/null
+          if compgen -G '.changes/unreleased/*.yaml' > /dev/null; then
+            changie batch auto --dry-run > /dev/null
+          fi
           changie merge --dry-run | diff CHANGELOG.md -
