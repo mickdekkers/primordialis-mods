@@ -30,6 +30,16 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal --component clippy,rustfmt
 
+      # Caches the downloaded crates and the compiled dependencies (not the workspace's own crates, and
+      # nothing no longer in Cargo.lock), keyed by the rustc version, Cargo.lock and the Rust environment
+      # variables. Only runs on main save it, and only when they pass; pull requests restore main's.
+      # Nothing is installed with `cargo install`, so ~/.cargo/bin is left alone. (The Release workflow
+      # builds from scratch.)
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-bin: "false"
+
       - name: Check formatting
         run: cargo fmt --all --check
 

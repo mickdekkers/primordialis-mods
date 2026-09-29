@@ -105,20 +105,27 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           "commit=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
-      - name: Test
-        run: cargo test --release --locked
-
-      - name: Build
-        # Rust embeds source paths in the DLL, for panic messages. Those include where Cargo and rustup
-        # keep their files, in the home folder of whoever built it: map them to neutral names.
+      # Rust embeds source paths in the DLL, for panic messages. Those include where Cargo and rustup
+      # keep their files, in the home folder of whoever built it: map them to neutral names. The tests
+      # are built with the same flags, since changing them rebuilds everything: the build then only
+      # compiles the mod itself, reusing the dependencies the tests compiled.
+      - name: Map local paths
         run: |
           $cargoHome = $env:CARGO_HOME ?? (Join-Path $env:USERPROFILE .cargo)
-          $env:CARGO_ENCODED_RUSTFLAGS = @(
+          $flags = @(
             "--remap-path-prefix=$cargoHome=/cargo"
             "--remap-path-prefix=$(rustup show home)=/rustup"
             "--remap-path-prefix=$env:GITHUB_WORKSPACE=/build"
           ) -join [char]0x1f
-          cargo build --release --locked -p primordialis_qol
+          "CARGO_ENCODED_RUSTFLAGS=$flags" >> $env:GITHUB_ENV
+
+      # Nothing is restored from a cache: the release is built from scratch, so what's published can't
+      # depend on anything an earlier run left behind.
+      - name: Test
+        run: cargo test --release --locked
+
+      - name: Build
+        run: cargo build --release --locked -p primordialis_qol
 
       - name: Check the DLL has no local paths
         run: .github/scripts/check-paths.ps1 target/release/primordialis_qol.dll
