@@ -210,7 +210,14 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    gets the result: the VirusTotal badge in the README links to this version's report, so the README at
    each tag matches that release. The README isn't part of the build, so the DLL is still what that
    commit builds. Step 1 checks the README has that badge, so a missing one fails before the upload.
-4. Pushes the release commit to `main`. It only fast-forwards: if `main` moved while the release was
+4. Attests the DLL's build provenance with `actions/attest`: a record, signed with a Sigstore certificate
+   issued to this workflow run, of the workflow, commit and run that built it, which GitHub keeps with
+   the repository. It's made in the publishing job rather than the build, since the build runs the
+   dependencies' build scripts and shouldn't be able to sign anything. Anyone can check a download
+   against it with `gh attestation verify primordialis_qol.dll --repo mickdekkers/primordialis-mods`;
+   adding `--signer-workflow mickdekkers/primordialis-mods/.github/workflows/release.yml` also requires
+   it to come from the Release workflow.
+5. Pushes the release commit to `main`. It only fast-forwards: if `main` moved while the release was
    being built, nothing is pushed or released, and running the workflow again starts over from the new
    `main`. `main`'s ruleset only takes changes through pull requests, which `GITHUB_TOKEN` can't
    bypass, so this uses a token from a GitHub App the ruleset lets bypass it. The token is made at the
@@ -219,8 +226,9 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    API, from the same changed files and message, because GitHub signs the commits it makes itself. The
    API only moves `main` if it's still where the release started, and the script then checks the new
    commit has the same tree as the one that was built, and a valid signature.
-5. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
-   the full report, the DLL's SHA-256, the DLL, and a zip with its PDB for investigating crashes.
+6. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
+   the full report, the DLL's SHA-256, a link to its attestation and how to verify it, the DLL, and a zip
+   with its PDB for investigating crashes.
 
 If no engine flagged the DLL, the release is published. Otherwise, or if the scan didn't finish, it's
 left as a draft: look at the report, adjust the notes if needed, and publish it by hand, which also
