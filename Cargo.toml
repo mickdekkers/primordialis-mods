@@ -1,6 +1,6 @@
 [package]
 name = "primordialis_qol"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2024"
 description = "Primordialis QoL mod: shows the cell pickups you've seen on the map"
 license = "MIT"

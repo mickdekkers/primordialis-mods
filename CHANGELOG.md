@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5 (2026-09-29)
+
+### Added
+
+- The first published release with the changes from 0.2.3 and 0.2.4, which weren't released on their own: the DLL has a build attestation on GitHub to check your download against (see "Is it safe?" in the README), and comes from a release commit GitHub signed.
 ## 0.2.4 (2026-09-29)
 
 ### Added
