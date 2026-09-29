@@ -1,66 +1,59 @@
 #!/usr/bin/env bash
-# Puts a local commit on a branch of this GitHub repository as a commit GitHub signs. A pushed commit
-# keeps its (missing) signature, but GitHub signs the commits a GitHub App creates through its API, as
-# long as they have no custom author or committer. So the commit's changed files are uploaded, and the
-# commit is recreated there: same tree, parent and message, with the App as its author. The tree is
-# checked against the local one before anything is created, and the branch only fast-forwards: if it
-# moved on from the commit's parent, it isn't changed.
+# Puts a local commit on a branch of this GitHub repository as a commit GitHub signs. A GitHub App
+# can't sign a commit it pushes, but GitHub signs the commits it creates itself, so the commit is made
+# with GitHub's createCommitOnBranch API instead: the same changed files and message, on the same
+# parent. The API only moves the branch if it's still at that parent (a fast-forward). The new commit
+# is then checked to have the local commit's tree and a valid signature.
 #
 # Needs GH_TOKEN (a GitHub App installation token that can write contents) and GITHUB_REPOSITORY. In
-# GitHub Actions, sets the step output `commit` to the signed commit. With DRY_RUN set, it stops after
-# checking the tree, before creating the commit.
+# GitHub Actions, sets the step output `commit` to the signed commit.
 #
 # Usage: push-signed-commit.sh <commit> <branch>
 set -euo pipefail
 
 commit=$1
 branch=$2
-repo=${GITHUB_REPOSITORY:?}
 parent=$(git rev-parse "$commit^")
 tree=$(git rev-parse "$commit^{tree}")
 
-# The changed files as tree entries, on top of the parent's tree. Each file is uploaded as a blob, which
-# must hash to the same object it is locally.
-entries=$(mktemp)
-git diff-tree -r --no-renames "$parent" "$commit" | while IFS=$'\t' read -r meta path; do
-  read -r old_mode mode _ sha status <<<"$meta"
+# The changed files: the path and contents of each added or modified one, the path of each deleted one.
+changes=$(mktemp)
+git diff-tree -r --no-renames --name-status "$parent" "$commit" | while IFS=$'\t' read -r status path; do
   if [[ $status == D ]]; then
-    jq -n --arg path "$path" --arg mode "${old_mode#:}" \
-      '{path: $path, mode: $mode, type: "blob", sha: null}' >> "$entries"
+    jq -n --arg path "$path" '{path: $path}'
   else
-    uploaded=$(git cat-file blob "$sha" | base64 -w0 | jq -Rs '{content: ., encoding: "base64"}' |
-      gh api "repos/$repo/git/blobs" --input - --jq .sha)
-    if [[ $uploaded != "$sha" ]]; then
-      echo "::error::Uploading $path gave blob $uploaded, not $sha."
-      exit 1
-    fi
-    jq -n --arg path "$path" --arg mode "$mode" --arg sha "$sha" \
-      '{path: $path, mode: $mode, type: "blob", sha: $sha}' >> "$entries"
+    git cat-file blob "$commit:$path" | base64 -w0 | jq -Rs --arg path "$path" '{path: $path, contents: .}'
   fi
-done
+done > "$changes"
 
-uploaded_tree=$(jq -n --arg base "$(git rev-parse "$parent^{tree}")" --slurpfile entries "$entries" \
-  '{base_tree: $base, tree: $entries}' | gh api "repos/$repo/git/trees" --input - --jq .sha)
-if [[ $uploaded_tree != "$tree" ]]; then
-  echo "::error::The uploaded tree is $uploaded_tree, not the commit's tree $tree."
+# shellcheck disable=SC2016 # $input is a GraphQL variable
+query='mutation($input: CreateCommitOnBranchInput!) {
+  createCommitOnBranch(input: $input) { commit { oid tree { oid } signature { isValid } } }
+}'
+created=$(jq -n --arg query "$query" --arg repo "${GITHUB_REPOSITORY:?}" --arg branch "$branch" \
+  --arg parent "$parent" --arg headline "$(git log -1 --format=%s "$commit")" \
+  --arg body "$(git log -1 --format=%b "$commit")" --slurpfile changes "$changes" '{
+    query: $query,
+    variables: {input: {
+      branch: {repositoryNameWithOwner: $repo, branchName: $branch},
+      expectedHeadOid: $parent,
+      message: {headline: $headline, body: $body},
+      fileChanges: {
+        additions: [$changes[] | select(has("contents"))],
+        deletions: [$changes[] | select(has("contents") | not)]
+      }
+    }}
+  }' | gh api graphql --input - --jq .data.createCommitOnBranch.commit)
+signed=$(jq -r .oid <<<"$created")
+echo "Created $signed on $branch"
+
+# The branch has already moved, so a failed check fails the release before it's published.
+if [[ $(jq -r .tree.oid <<<"$created") != "$tree" ]]; then
+  echo "::error::$signed doesn't have the tree of $commit ($tree)."
   exit 1
 fi
-echo "Uploaded the tree of $commit ($tree)"
-if [[ -n ${DRY_RUN:-} ]]; then
-  exit 0
-fi
-
-created=$(git log -1 --format=%B "$commit" |
-  jq -Rs --arg tree "$tree" --arg parent "$parent" '{message: ., tree: $tree, parents: [$parent]}' |
-  gh api "repos/$repo/git/commits" --input -)
-signed=$(jq -r .sha <<<"$created")
-if [[ $(jq -r .verification.verified <<<"$created") != true ]]; then
-  echo "::error::GitHub didn't sign the commit $signed ($(jq -r .verification.reason <<<"$created"))."
+if [[ $(jq -r .signature.isValid <<<"$created") != true ]]; then
+  echo "::error::GitHub didn't sign $signed."
   exit 1
 fi
-echo "Created the signed commit $signed"
-
-# Without force, GitHub only moves the branch if the commit builds on where it is now.
-gh api --method PATCH "repos/$repo/git/refs/heads/$branch" -f sha="$signed" -F force=false > /dev/null
-echo "Moved $branch to $signed"
 echo "commit=$signed" >> "${GITHUB_OUTPUT:-/dev/null}"

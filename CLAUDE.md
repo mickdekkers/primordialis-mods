@@ -142,8 +142,8 @@ These keep hooking and unloading safe while the game runs:
 - `main` has a ruleset: changes only through pull requests (squash-merged), signed commits, and the
   "Format, lint and test" check. `GITHUB_TOKEN` can't bypass it, so the release puts its commit on
   `main` with a token from a GitHub App that can (`actions/create-github-app-token`, with the App's
-  client ID and key in the `release` environment). It recreates the commit through the API
-  (`.github/scripts/push-signed-commit.sh`) so that GitHub signs it.
+  client ID and key in the `release` environment). GitHub makes the commit, from the same changes, with
+  its `createCommitOnBranch` API (`.github/scripts/push-signed-commit.sh`), so that it's signed.
 - Only `primordialis_qol.dll` (and a zip of its PDB) is released, never the hot reload host or injector.
   Its file name is what players type in the launch option, so it never changes.
 - Release builds strip local paths with `--remap-path-prefix`, and `.github/scripts/check-paths.ps1`

@@ -215,10 +215,10 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    `main`. `main`'s ruleset only takes changes through pull requests, which `GITHUB_TOKEN` can't
    bypass, so this uses a token from a GitHub App the ruleset lets bypass it. The token is made at the
    start of the job, so a problem with the App fails the release before the upload. The commit isn't
-   pushed but recreated through GitHub's API (`.github/scripts/push-signed-commit.sh`), because GitHub
-   signs the commits an App creates that way: the script uploads the changed files, checks that GitHub
-   built the same tree as the local commit, creates the commit with the same parent and message, and
-   checks it's signed before moving `main`.
+   pushed: `.github/scripts/push-signed-commit.sh` has GitHub make it with its `createCommitOnBranch`
+   API, from the same changed files and message, because GitHub signs the commits it makes itself. The
+   API only moves `main` if it's still where the release started, and the script then checks the new
+   commit has the same tree as the one that was built, and a valid signature.
 5. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
    the full report, the DLL's SHA-256, the DLL, and a zip with its PDB for investigating crashes.
 

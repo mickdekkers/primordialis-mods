@@ -217,8 +217,8 @@ jobs:
             commit --quiet --amend --no-edit README.md
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Recreated through the API, so that GitHub signs it, with the same files. Only a fast-forward: if
-      # main moved since the build started, this fails and nothing is released.
+      # GitHub makes the commit from the same changes, so that it's signed. Only a fast-forward: if main
+      # moved since the build started, this fails and nothing is released.
       - name: Push the release commit
         id: push
         env:
