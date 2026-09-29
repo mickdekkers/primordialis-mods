@@ -110,8 +110,8 @@ These keep hooking and unloading safe while the game runs:
 - `cargo clippy --workspace --all-targets --release` should be clean.
 - Run `cargo fmt --all` before every commit. It uses rustfmt's defaults (there is no rustfmt
   config), and `cargo fmt --all --check` must be clean.
-- The Rust sources and the other docs use LF line endings, and `README.md` uses CRLF. Scripted edits
-  must keep each file's line endings (in Python on Windows, open files with `newline=''`).
+- Every text file uses LF line endings, which `.gitattributes` enforces. Scripted edits must keep them
+  (in Python on Windows, open files with `newline=''`).
 - The game comes in AVX and SSE3 builds (`primordialis_avx.exe`, `primordialis_sse3.exe`).
 - **Logs** go next to the DLL: `primordialis_qol.log` for the mod, `primordialis_qol_hot_reload.log`
   for the host. Each game process starts a new mod log and keeps the previous one as

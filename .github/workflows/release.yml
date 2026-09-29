@@ -36,11 +36,6 @@ jobs:
       version: ${{ steps.prepare.outputs.version }}
       commit: ${{ steps.prepare.outputs.commit }}
     steps:
-      # Check out the files exactly as committed (the runner would convert them to CRLF), so the release
-      # commit changes nothing but the version and the changelog.
-      - name: Keep line endings
-        run: git config --global core.autocrlf false
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -195,10 +190,8 @@ jobs:
             exit 1
           fi
           git checkout --quiet --detach "$COMMIT"
-          # README.md has CRLF line endings: write them explicitly, whatever awk does with the CRs it
-          # reads. Anything but the badge line changing fails the release.
-          awk '{ sub(/\r$/, "") } /^\[!\[VirusTotal/ { $0 = ENVIRON["BADGE"] } { printf "%s\r\n", $0 }' \
-            README.md > README.new
+          # Anything but the badge line changing fails the release.
+          awk '/^\[!\[VirusTotal/ { $0 = ENVIRON["BADGE"] } { print }' README.md > README.new
           mv README.new README.md
           git diff
           if [[ $(git diff --numstat) != $'1\t1\tREADME.md' ]]; then
