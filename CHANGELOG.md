@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4 (2026-09-29)
+
+### Added
+
+- Each release's DLL has a build attestation on GitHub, a signed record that this repository's release workflow built it, which you can check your download against (see "Is it safe?" in the README).
 ## 0.2.3 (2026-09-29)
 
 ### Changed

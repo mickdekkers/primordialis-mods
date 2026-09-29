@@ -1,3 +1,0 @@
-kind: Added
-body: Each release's DLL has a build attestation on GitHub, a signed record that this repository's release workflow built it, which you can check your download against (see "Is it safe?" in the README).
-time: 2026-09-29T22:23:02.3190779+02:00
