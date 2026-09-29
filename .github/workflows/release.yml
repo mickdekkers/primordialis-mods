@@ -163,9 +163,10 @@ jobs:
           persist-credentials: false
 
       # main's ruleset only takes changes through pull requests, and GITHUB_TOKEN can't bypass it. The
-      # release commit is pushed by a GitHub App the ruleset lets bypass it, with a token that can only
-      # write this repository's contents and is revoked when the job ends. It's made first, so a
-      # problem with the App fails the release before anything is uploaded.
+      # release commit is made by a GitHub App the ruleset lets bypass it (which also has GitHub sign
+      # the commit), with a token that can only write this repository's contents and is revoked when
+      # the job ends. It's made first, so a problem with the App fails the release before anything is
+      # uploaded.
       - name: Get a token to push to main
         id: app
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -216,20 +217,20 @@ jobs:
             commit --quiet --amend --no-edit README.md
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # Only a fast-forward: if main moved since the build started, this fails and nothing is released.
+      # Recreated through the API, so that GitHub signs it, with the same files. Only a fast-forward: if
+      # main moved since the build started, this fails and nothing is released.
       - name: Push the release commit
+        id: push
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           RELEASE_COMMIT: ${{ steps.readme.outputs.commit }}
-        run: |
-          gh auth setup-git
-          git push origin "$RELEASE_COMMIT:refs/heads/main"
+        run: bash .github/scripts/push-signed-commit.sh "$RELEASE_COMMIT" main
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           CLEAN: ${{ steps.scan.outputs.clean }}
-          RELEASE_COMMIT: ${{ steps.readme.outputs.commit }}
+          RELEASE_COMMIT: ${{ steps.push.outputs.commit }}
         run: |
           tag="v$VERSION"
           sha256=$(sha256sum dist/primordialis_qol.dll | cut -d' ' -f1)
