@@ -2,7 +2,7 @@
 
 [![Game: Primordialis v0.2 beta](https://img.shields.io/badge/game-Primordialis_v0.2_beta-blue)](#compatibility)
 [![Latest release](https://img.shields.io/github/v/release/mickdekkers/primordialis-mods?label=mod)](../../releases/latest)
-[![VirusTotal: 0/65 detections](https://img.shields.io/badge/VirusTotal-0%2F65%20detections-brightgreen)](https://www.virustotal.com/gui/file/da6b461213bf432be74f821965fda22b426c1b931ce3a80d64118d2816358a68)
+[![VirusTotal: 0/70 detections](https://img.shields.io/badge/VirusTotal-0%2F70%20detections-brightgreen)](https://www.virustotal.com/gui/file/f87b051b152c669fb2a5e35f64c27fd0ea1b397168b9126769a3c3f40d3ace3e)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](#compatibility)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

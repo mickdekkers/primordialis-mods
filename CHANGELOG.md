@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 (2026-09-29)
+
+### Added
+
+- The README shows the latest release's VirusTotal result, linking to its full report.
 ## 0.2.1 (2026-09-29)
 
 ### Added
