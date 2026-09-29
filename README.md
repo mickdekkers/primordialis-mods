@@ -2,6 +2,7 @@
 
 [![Game: Primordialis v0.2 beta](https://img.shields.io/badge/game-Primordialis_v0.2_beta-blue)](#compatibility)
 [![Latest release](https://img.shields.io/github/v/release/mickdekkers/primordialis-mods?label=mod)](../../releases/latest)
+[![VirusTotal: 0/65 detections](https://img.shields.io/badge/VirusTotal-0%2F65%20detections-brightgreen)](https://www.virustotal.com/gui/file/da6b461213bf432be74f821965fda22b426c1b931ce3a80d64118d2816358a68)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](#compatibility)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -76,7 +77,8 @@ you've found in your current run and sandbox (`primordialis_qol_detected.bin`), 
   feature turns off and the rest keep working.
 - **You can check what you download.** The mod is open source. Each release is built by GitHub from the
   code in this repository, not on anyone's PC, and scanned by the antivirus engines on VirusTotal. The
-  release notes show the result, link to the full report, and list the file's SHA-256 checksum.
+  badge at the top of this page and the release notes show the result and link to the full report, and
+  the release notes list the file's SHA-256 checksum.
 
 The mod works by hooking into the game's code while it runs, which some antivirus programs are wary of,
 so one may occasionally flag it. The VirusTotal report for each release shows which engines, if any, did.

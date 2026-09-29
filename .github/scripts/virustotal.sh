@@ -2,7 +2,7 @@
 # Uploads a file to VirusTotal, waits for the scan to finish, and writes the result as Markdown for
 # the release notes: a badge with the number of engines that flagged the file, linking to the full
 # report. Needs VT_API_KEY. In GitHub Actions, sets the step output `clean` to `true` when the scan
-# finished and no engine flagged the file.
+# finished and no engine flagged the file, and `badge` to the badge alone, for the README.
 #
 # Usage: virustotal.sh <file> <markdown output>
 set -euo pipefail
@@ -21,6 +21,10 @@ fi
 
 set_clean() {
   echo "clean=$1" >> "${GITHUB_OUTPUT:-/dev/null}"
+}
+
+set_badge() {
+  echo "badge=$1" >> "${GITHUB_OUTPUT:-/dev/null}"
 }
 
 # The free API allows 4 requests a minute, so failed requests (e.g. rate limited) are retried slowly.
@@ -55,6 +59,7 @@ The scan of \`$name\` hadn't finished when this release was made. The [report]($
 results.
 EOF
   set_clean false
+  set_badge "[![VirusTotal: scan not finished](https://img.shields.io/badge/VirusTotal-report-lightgrey)]($report)"
   exit 0
 fi
 
@@ -80,11 +85,12 @@ else
   set_clean false
 fi
 
-badge="https://img.shields.io/badge/VirusTotal-${flagged}%2F${total}%20detections-${color}"
+badge="[![VirusTotal: $flagged/$total detections](https://img.shields.io/badge/VirusTotal-${flagged}%2F${total}%20detections-${color})]($report)"
+set_badge "$badge"
 cat >"$out" <<EOF
 ### VirusTotal
 
-[![VirusTotal: $flagged/$total detections]($badge)]($report)
+$badge
 
 $verdict [Full report]($report)
 EOF

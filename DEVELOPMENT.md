@@ -198,12 +198,17 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
 1. Batches the waiting changes into the new version with changie: its section in `CHANGELOG.md`, and its
    number in `Cargo.toml` and `Cargo.lock`. It commits that as "Release v<version>", without pushing it
    yet. It fails if there's nothing to release.
-2. Runs the tests, and builds `primordialis_qol.dll` with `--remap-path-prefix`, so the paths Rust embeds
-   point to `/cargo`, `/rustup` and `/build` instead of folders on the build machine. Then
+2. Runs the tests, and builds `primordialis_qol.dll`, both with `--remap-path-prefix` (the same flags, so
+   the build reuses the dependencies the tests compiled). The paths Rust embeds then point to `/cargo`,
+   `/rustup` and `/build` instead of folders on the build machine. Nothing comes from a cache: every
+   release is built from scratch. Then
    `.github/scripts/check-paths.ps1` checks that every path in the DLL has an expected form: no absolute
    paths at all, and every source path under one of those neutral roots (or the ones the Rust project's
    own builds use). Anything else fails the release. Run it on a local build to see what it catches.
-3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes).
+3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes). The release commit then
+   gets the result: the VirusTotal badge in the README links to this version's report, so the README at
+   each tag matches that release. The README isn't part of the build, so the DLL is still what that
+   commit builds. Step 1 checks the README has that badge, so a missing one fails before the upload.
 4. Pushes the release commit to `main`. It only fast-forwards: if `main` moved while the release was
    being built, nothing is pushed or released, and running the workflow again starts over from the new
    `main`.

@@ -80,6 +80,12 @@ jobs:
           $tag = changie latest
           $version = $tag.TrimStart('v')
 
+          # The publishing job links the README's VirusTotal badge to this version's report. Check the
+          # badge is there now, before anything is uploaded.
+          if (@(Select-String -Path README.md -Pattern '^\[!\[VirusTotal').Count -ne 1) {
+            throw 'README.md needs exactly one line starting with the VirusTotal badge.'
+          }
+
           # changie set the version in Cargo.toml and Cargo.lock; --locked fails if they disagree.
           $package = (cargo metadata --no-deps --format-version 1 --locked | ConvertFrom-Json).packages |
             Where-Object name -eq primordialis_qol
@@ -95,7 +101,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add CHANGELOG.md .changes Cargo.toml Cargo.lock
-          git commit --quiet -m "Release $tag" -m "Batches the changes in .changes/unreleased into CHANGELOG.md, and sets the version to $version."
+          git commit --quiet -m "Release $tag" -m "Batches the changes in .changes/unreleased into CHANGELOG.md, sets the version to $version, and links the README's VirusTotal badge to this version's report."
           if ($LASTEXITCODE) { throw 'git commit failed' }
           # The publishing job pushes this commit, if everything else succeeds.
           git bundle create dist/release.bundle "$env:GITHUB_SHA..HEAD"
@@ -171,23 +177,53 @@ jobs:
           VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
         run: bash .github/scripts/virustotal.sh dist/primordialis_qol.dll virustotal.md
 
-      # Only a fast-forward: if main moved since the build started, this fails and nothing is released.
-      - name: Push the release commit
+      # The DLL's report only exists now, so the release commit gets it here: its README links to the
+      # report for the DLL released with it. The README isn't part of the build, so the DLL is still
+      # what that commit builds.
+      - name: Link the README to the report
+        id: readme
         env:
-          GH_TOKEN: ${{ github.token }}
+          BADGE: ${{ steps.scan.outputs.badge }}
         run: |
           git fetch --quiet dist/release.bundle HEAD
           if [[ $(git rev-parse FETCH_HEAD) != "$COMMIT" ]]; then
             echo "::error::The bundle doesn't hold the release commit $COMMIT."
             exit 1
           fi
+          if [[ -z $BADGE ]]; then
+            echo "::error::The VirusTotal scan gave no badge."
+            exit 1
+          fi
+          git checkout --quiet --detach "$COMMIT"
+          # README.md has CRLF line endings: write them explicitly, whatever awk does with the CRs it
+          # reads. Anything but the badge line changing fails the release.
+          awk '{ sub(/\r$/, "") } /^\[!\[VirusTotal/ { $0 = ENVIRON["BADGE"] } { printf "%s\r\n", $0 }' \
+            README.md > README.new
+          mv README.new README.md
+          git diff
+          if [[ $(git diff --numstat) != $'1\t1\tREADME.md' ]]; then
+            echo "::error::Linking the report changed more of README.md than its VirusTotal badge."
+            exit 1
+          fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet --amend --no-edit README.md
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Only a fast-forward: if main moved since the build started, this fails and nothing is released.
+      - name: Push the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.readme.outputs.commit }}
+        run: |
           gh auth setup-git
-          git push origin "$COMMIT:refs/heads/main"
+          git push origin "$RELEASE_COMMIT:refs/heads/main"
 
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
           CLEAN: ${{ steps.scan.outputs.clean }}
+          RELEASE_COMMIT: ${{ steps.readme.outputs.commit }}
         run: |
           tag="v$VERSION"
           sha256=$(sha256sum dist/primordialis_qol.dll | cut -d' ' -f1)
@@ -208,6 +244,6 @@ jobs:
             draft=(--draft)
             echo "::warning::Left the release as a draft: check the VirusTotal report, then publish it by hand."
           fi
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$COMMIT" \
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" \
             --title "Primordialis QoL $VERSION" --notes-file notes.md "${draft[@]}" \
             dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"
