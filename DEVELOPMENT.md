@@ -206,9 +206,9 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    `.github/scripts/check-paths.ps1` checks that every path in the DLL has an expected form: no absolute
    paths at all, and every source path under one of those neutral roots (or the ones the Rust project's
    own builds use). Anything else fails the release. Run it on a local build to see what it catches.
-3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes). The release commit then
-   gets the result: the VirusTotal badge in the README links to this version's report, so the README at
-   each tag matches that release. The README isn't part of the build, so the DLL is still what that
+3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes, at most an hour). The
+   release commit then gets the result: the VirusTotal badge in the README links to this version's
+   report, so the README at each tag matches that release. The README isn't part of the build, so the DLL is still what that
    commit builds. Step 1 checks the README has that badge, so a missing one fails before the upload.
 4. Attests the DLL's build provenance with `actions/attest`: a record, signed with a Sigstore certificate
    issued to this workflow run, of the workflow, commit and run that built it, which GitHub keeps with

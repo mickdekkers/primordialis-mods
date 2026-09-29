@@ -64,9 +64,12 @@ jobs:
           REQUESTED: ${{ inputs.version }}
         run: |
           $bump = if ($env:REQUESTED) { $env:REQUESTED } else { 'auto' }
-          if ($bump -notmatch '^(auto|major|minor|patch|\d+\.\d+\.\d+)$') {
+          if ($bump -notmatch '^(auto|major|minor|patch|v?\d+\.\d+\.\d+)$') {
             throw "'$bump' isn't a version: leave it empty, or give major, minor, patch, or e.g. 1.0.0."
           }
+          # changie names the version exactly as given, and every version so far is v-prefixed (its
+          # notes file, `changie latest`, the commit message), so a version typed without one gets it.
+          if ($bump -match '^\d') { $bump = "v$bump" }
           # Fails if there are no changes to release.
           changie batch $bump --allow-no-changes=false
           if ($LASTEXITCODE) { throw 'changie batch failed' }
