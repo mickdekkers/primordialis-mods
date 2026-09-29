@@ -139,6 +139,11 @@ These keep hooking and unloading safe while the game runs:
   the version in `Cargo.toml` and `Cargo.lock`), builds and tests, scans the DLL on VirusTotal, then
   pushes the "Release v<version>" commit to `main` and creates the tag and release (a draft if any
   engine flagged it). Never bump the version or tag by hand. `DEVELOPMENT.md` has the details.
+- `main` has a ruleset: changes only through pull requests (squash-merged), signed commits, and the
+  "Format, lint and test" check. `GITHUB_TOKEN` can't bypass it, so the release puts its commit on
+  `main` with a token from a GitHub App that can (`actions/create-github-app-token`, with the App's
+  client ID and key in the `release` environment). GitHub makes the commit, from the same changes, with
+  its `createCommitOnBranch` API (`.github/scripts/push-signed-commit.sh`), so that it's signed.
 - Only `primordialis_qol.dll` (and a zip of its PDB) is released, never the hot reload host or injector.
   Its file name is what players type in the launch option, so it never changes.
 - Release builds strip local paths with `--remap-path-prefix`, and `.github/scripts/check-paths.ps1`
@@ -177,5 +182,6 @@ These keep hooking and unloading safe while the game runs:
 - Doc comments are plain prose that explain why.
 - Every `unsafe` block has a `// SAFETY:` comment.
 - Errors are `String`s with context, e.g. `format!("cannot hook {name}: {e}")`.
-- Commit messages have a summary line and then a body explaining why. Work happens on `main`. Run
-  `cargo fmt --all` first.
+- Commit messages have a summary line and then a body explaining why. Run `cargo fmt --all` first.
+- Work happens on a branch, merged into `main` through a pull request (direct pushes to `main` are
+  rejected). A pull request with one commit squashes into that commit's message.

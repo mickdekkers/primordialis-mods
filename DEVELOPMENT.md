@@ -121,7 +121,8 @@ cargo test --release -p modkit -- --ignored --test-threads=1 patches_code_other_
 
 Before committing: `cargo fmt --all`, and `cargo clippy --workspace --all-targets --release` should be
 clean. CI (`.github/workflows/ci.yml`) checks formatting, clippy and the tests on every push to `main`
-and every pull request.
+and every pull request. Changes reach `main` through pull requests, squash-merged once "Format, lint and
+test" passes.
 
 Dependencies are pinned to exact, reviewed versions, in the workspace's `Cargo.toml` (and `Cargo.lock`).
 
@@ -211,7 +212,13 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    commit builds. Step 1 checks the README has that badge, so a missing one fails before the upload.
 4. Pushes the release commit to `main`. It only fast-forwards: if `main` moved while the release was
    being built, nothing is pushed or released, and running the workflow again starts over from the new
-   `main`.
+   `main`. `main`'s ruleset only takes changes through pull requests, which `GITHUB_TOKEN` can't
+   bypass, so this uses a token from a GitHub App the ruleset lets bypass it. The token is made at the
+   start of the job, so a problem with the App fails the release before the upload. The commit isn't
+   pushed: `.github/scripts/push-signed-commit.sh` has GitHub make it with its `createCommitOnBranch`
+   API, from the same changed files and message, because GitHub signs the commits it makes itself. The
+   API only moves `main` if it's still where the release started, and the script then checks the new
+   commit has the same tree as the one that was built, and a valid signature.
 5. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
    the full report, the DLL's SHA-256, the DLL, and a zip with its PDB for investigating crashes.
 
