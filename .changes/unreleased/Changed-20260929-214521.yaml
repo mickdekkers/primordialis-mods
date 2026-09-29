@@ -1,0 +1,3 @@
+kind: Changed
+body: Each release now comes from a commit GitHub has signed and shows as Verified, so you can check it was made by this repository's release process.
+time: 2026-09-29T21:45:21.5236381+02:00
