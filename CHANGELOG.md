@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.1 (2026-09-29)
+
+### Added
+
+- Screenshots in the README, and badges showing the game version, the latest release and that the mod is for Windows.
 ## 0.2.0 (2026-09-27)
 
 ### Added
