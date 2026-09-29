@@ -1,13 +1,17 @@
 # Primordialis QoL
 
-A small quality-of-life mod for Primordialis: open the map and see *which* cells are lying around, not
-just where you've been.
+[![Game: Primordialis v0.2 beta](https://img.shields.io/badge/game-Primordialis_v0.2_beta-blue)](#compatibility)
+[![Latest release](https://img.shields.io/github/v/release/mickdekkers/primordialis-mods?label=mod)](../../releases/latest)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](#compatibility)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-![The map, with an icon for every cell pickup you've seen](docs/screenshots/map-icons.png)
+A small quality-of-life mod for Primordialis: keep track of cells you've come across on the map.
+
+![The map, with an icon for every cell pickup you've seen](docs/screenshots/map-icons.jpg)
 
 ## What it does
 
-**See every cell on the map.** Each cell pickup you've seen shows up on the map with its own icon,
+**See every cell you've discovered on the map.** Each cell pickup you've seen shows up on the map with its own icon,
 drawn just like the pickup looks in the world. Combo cells get their shifting colors and a ring of
 rainbow dots, like the sparkle around them in the world.
 
@@ -18,20 +22,16 @@ keep their secrets. Cells you've seen stay on the map, also after restarting the
 **Tell piles apart.** Where icons overlap, point at them and they spread out, with a line back to where
 each one really is.
 
-![A pile of icons, spread out under the mouse](docs/screenshots/spread.png)
+![A pile of icons, spread out under the mouse](docs/screenshots/spread.jpg)
 
-**Read about a cell without flying to it.** Point at an icon to get the same tooltip the game shows for
+**Read about a cell without swimming to it.** Point at an icon to get the same tooltip the game shows for
 a pickup right next to you: the cell's name, description, cost and genome size, and what picking it up
 would change.
-
-![The game's tooltip, shown for a map icon](docs/screenshots/tooltip.png)
 
 **Icons where the cells really are.** The game leaves far-away pickups where they spawned, sometimes
 inside rock, and only pushes them out once you get close. The mod shows them where they'll end up, so
 you don't plan a trip to a cell buried in a wall. If you have the Echolocation mutation, its markers
 get the same fix.
-
-![Echolocation markers without the mod (left) and with it (right)](docs/screenshots/echolocation.png)
 
 ## Why
 
@@ -53,6 +53,8 @@ it feels like part of the game.
    ```
 4. Start the game. The main menu shows the mod's version under the game's, in the bottom-left
    corner, so you can tell it's loaded. Explore a bit, and open the map.
+
+<img src="docs/screenshots/mod-version-display.png" alt="The mod's version is displayed below the game version in the pause menu" width="600">
 
 To update, close the game and replace `primordialis_qol.dll` with the new one.
 
@@ -119,7 +121,8 @@ Remove the launch option. You can then delete `primordialis_qol.dll`, `primordia
 
 ## Compatibility
 
-Made for Primordialis v0.2 beta, and works with both versions the game comes in (AVX and SSE3).
+Made for Primordialis v0.2 beta on Windows (64-bit), and works with both versions the game comes in
+(AVX and SSE3). It hasn't been tried on Linux or the Steam Deck through Proton.
 The mod finds what it needs in the game by name rather than relying on one exact version, so it often
 keeps working after a game update. When it can't, it turns itself off (see above).
 
