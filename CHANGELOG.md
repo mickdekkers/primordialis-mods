@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 (2026-09-29)
+
+### Changed
+
+- Each release now comes from a commit GitHub has signed and shows as Verified, so you can check it was made by this repository's release process.
 ## 0.2.2 (2026-09-29)
 
 ### Added
