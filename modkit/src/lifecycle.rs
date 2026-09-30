@@ -1,7 +1,7 @@
-//! Starting and stopping a mod: when the game loads it (`--customdll`), or when the hot reload host
-//! swaps builds (`modkit_protocol`).
+//! Starting and stopping a mod: when the game loads it (`--customdll`), when the Nucleus mod loader
+//! does (`Initialise`), or when the hot reload host swaps builds (`modkit_protocol`).
 
-use std::ffi::c_void;
+use std::ffi::{OsStr, OsString, c_void};
 use std::panic;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -34,6 +34,8 @@ pub struct Mod {
 
 /// Whether the mod is hooked into the game.
 static RUNNING: AtomicBool = AtomicBool::new(false);
+/// Whether the mod started on its own (from `DllMain` or `Initialise`), rather than by the host.
+static STARTED: AtomicBool = AtomicBool::new(false);
 /// What `prepare` found, for `start`.
 static PREPARED: Mutex<Option<Prepared>> = Mutex::new(None);
 
@@ -61,25 +63,21 @@ pub unsafe fn dll_main(
                 // The host calls `prepare` and `start` once loading is done.
                 return TRUE;
             }
+            let own_name = module::path(module)
+                .ok()
+                .and_then(|path| path.file_name().map(OsStr::to_owned));
+            if let Some(own_name) = own_name
+                && custom_dll_is_another(std::env::args_os(), &own_name)
+            {
+                // `--customdll` loaded a mod loader, which loaded us and calls `Initialise` once
+                // loading is done.
+                return TRUE;
+            }
             // Loaded by the game through `--customdll`, on its main thread while parsing the command
             // line, before it renders anything. Hooking right away means the hooks are in place before
-            // the game first runs the hooked functions.
-            let result = panic::catch_unwind(|| {
-                let path = module::path(module)?;
-                let dir = path.parent().ok_or("DLL path has no parent directory")?;
-                activate(prepare_in(definition, dir)?)
-            });
-            let error = match result {
-                Ok(Ok(())) => return TRUE,
-                Ok(Err(error)) => error,
-                Err(_) => "panicked during setup".to_owned(),
-            };
-            log::error(&format!("not active, the game runs unmodified: {error}"));
-            // Most often a game update changed something the mod relies on.
-            log::info(&format!(
-                "if the game was updated, a newer version of {} may fix this: {}",
-                definition.title, definition.homepage
-            ));
+            // the game first runs the hooked functions. Without `--customdll`, something injected us,
+            // and nothing else will start us either.
+            start_standalone(definition, "the game (--customdll)");
         }
         // Unloaded with `FreeLibrary` (not process exit), which only the host does, after stopping us:
         // free everything we allocated. None of our code runs anymore.
@@ -92,15 +90,77 @@ pub unsafe fn dll_main(
     TRUE
 }
 
+/// The mod DLL's `Initialise`, which the Nucleus mod loader calls after loading it. Nucleus loads
+/// mods while the game runs, the first time the game's `fiber_main` runs.
+pub fn initialise(definition: &'static Mod) {
+    // Not ours to start when the host loaded us.
+    if !module::is_loaded(modkit_protocol::HOST_MODULE) {
+        start_standalone(definition, "Nucleus");
+    }
+}
+
+/// Whether the command line's `--customdll` options, which each name a DLL for the game to load, name
+/// only DLLs other than `own_name`: then a mod loader loaded us. The game loads them with
+/// `LoadLibrary`, which adds `.dll` to a name without an extension.
+fn custom_dll_is_another(args: impl IntoIterator<Item = OsString>, own_name: &OsStr) -> bool {
+    let own_name = own_name.to_string_lossy().to_lowercase();
+    let mut args = args.into_iter();
+    let mut named_any = false;
+    while let Some(arg) = args.next() {
+        if arg != "--customdll" {
+            continue;
+        }
+        let Some(dll) = args.next() else { break };
+        let dll = Path::new(&dll);
+        let mut name = dll
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_lowercase();
+        if dll.extension().is_none() {
+            name.push_str(".dll");
+        }
+        if name == own_name {
+            return false;
+        }
+        named_any = true;
+    }
+    named_any
+}
+
+/// Starts the mod when it wasn't loaded by the host, at most once. `loader` is what loaded it, for
+/// the log.
+fn start_standalone(definition: &'static Mod, loader: &str) {
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let result = panic::catch_unwind(|| {
+        let path = module::own().and_then(module::path)?;
+        let dir = path.parent().ok_or("DLL path has no parent directory")?;
+        activate(prepare_in(definition, dir, loader)?)
+    });
+    let error = match result {
+        Ok(Ok(())) => return,
+        Ok(Err(error)) => error,
+        Err(_) => "panicked during setup".to_owned(),
+    };
+    log::error(&format!("not active, the game runs unmodified: {error}"));
+    // Most often a game update changed something the mod relies on.
+    log::info(&format!(
+        "if the game was updated, a newer version of {} may fix this: {}",
+        definition.title, definition.homepage
+    ));
+}
+
 /// Everything that doesn't change the game: settings, and finding what to hook. `home` holds the log,
-/// settings and symbol cache.
-fn prepare_in(definition: &Mod, home: &Path) -> Result<Prepared> {
+/// settings and symbol cache. `loader` is what loaded the mod, for the log.
+fn prepare_in(definition: &Mod, home: &Path, loader: &str) -> Result<Prepared> {
     log::init(&home.join(format!("{}.log", definition.name)));
     let location = module::own()
         .and_then(module::path)
         .map(|path| path.display().to_string());
     log::info(&format!(
-        "{} {} loaded from {}",
+        "{} {} loaded from {} by {loader}",
         definition.name,
         definition.version,
         location.as_deref().unwrap_or("an unknown location")
@@ -166,7 +226,7 @@ pub unsafe fn prepare(definition: &'static Mod, home_dir: *const u16, home_dir_l
         if RUNNING.load(Ordering::SeqCst) {
             return Err("already running".to_owned());
         }
-        prepare_in(definition, &home)
+        prepare_in(definition, &home, "the hot reload host")
     });
     let error = match result {
         Ok(Ok(prepared)) => {
@@ -217,5 +277,80 @@ pub fn stop() -> bool {
             log::error("cannot stop, panicked while stopping");
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::custom_dll_is_another;
+    use std::ffi::{OsStr, OsString};
+
+    fn is_another(args: &[&str]) -> bool {
+        let args = args.iter().map(OsString::from);
+        custom_dll_is_another(args, OsStr::new("primordialis_qol.dll"))
+    }
+
+    /// Our own file name is compared ignoring case too: Windows keeps it as it was written.
+    #[test]
+    fn own_name_is_compared_ignoring_case() {
+        let args = ["game.exe", "--customdll", "primordialis_qol.dll"].map(OsString::from);
+        assert!(!custom_dll_is_another(
+            args,
+            OsStr::new("Primordialis_QoL.dll")
+        ));
+    }
+
+    #[test]
+    fn custom_dll_naming_us_is_not_another() {
+        assert!(!is_another(&[
+            "game.exe",
+            "--customdll",
+            "primordialis_qol.dll"
+        ]));
+        assert!(!is_another(&[
+            "game.exe",
+            "--customdll",
+            r"C:\Mods\Primordialis_QoL.DLL"
+        ]));
+        assert!(!is_another(&[
+            "game.exe",
+            "--customdll",
+            "mods/primordialis_qol"
+        ]));
+        assert!(!is_another(&[
+            "game.exe",
+            "--customdll",
+            "nucleus.dll",
+            "--customdll",
+            "primordialis_qol.dll"
+        ]));
+    }
+
+    #[test]
+    fn custom_dll_naming_a_loader_is_another() {
+        assert!(is_another(&[
+            "game.exe",
+            "--customdll",
+            r"C:\Profile\Nucleus.dll"
+        ]));
+        // How the Pilus mod manager starts the game.
+        assert!(is_another(&[
+            "primordialis.exe",
+            "--steamless",
+            "--autoreload",
+            "--customdll",
+            "mods/Nucleus.dll"
+        ]));
+        assert!(is_another(&[
+            "game.exe",
+            "--customdll",
+            "primordialis_qol.dll.bak"
+        ]));
+    }
+
+    #[test]
+    fn no_custom_dll_is_not_another() {
+        assert!(!is_another(&["game.exe"]));
+        assert!(!is_another(&["game.exe", "--customdll"]));
     }
 }

@@ -7,6 +7,11 @@ install it, see the [README](README.md).
 
 - **Loading.** The game's `--customdll` launch option loads the DLL with `LoadLibraryW` early in
   startup, before the game renders anything. The mod hooks the game right away, from `DllMain`.
+  The [Nucleus](https://github.com/u0068/PrimordialisSDK) mod loader takes that launch option for
+  itself, and loads the DLLs in its `mods` folder later, the first time the game runs `fiber_main`,
+  then calls their `Initialise` export. So `DllMain` only starts the mod when `--customdll` names it
+  (or when there's no `--customdll`); otherwise it waits for `Initialise`. The mod doesn't use
+  Nucleus's API (see "Other mods' hooks").
 - **Finding things in the game.** Nothing is hardcoded to a game build. The mod reads the game
   executable's CodeView record to learn which PDB it was built with, extracts that PDB from the game's
   `pdbs.zip` into `primordialis_qol_cache` (once per game version, removing older ones), and uses
@@ -19,6 +24,13 @@ install it, see the [README](README.md).
   draws the menus' buttons. When the `menus` stage begins, the game has just drawn its map markers and
   is about to draw menus on top: that's where the icons are drawn, with the game's own
   `draw_cell_icons`.
+- **Other mods' hooks.** Nucleus mods hook through MinHook, and the ImGuiAPI mod hooks `render_game`
+  too. Either can go first: a function that already starts with another library's jump is hooked on
+  top of it (the jump is followed to the module it leads to, for the log), and the trampoline starts
+  with that jump, so both detours run. MinHook does the same with ours. Only a function hooked by a
+  modkit mod (one exporting `modkit_api_version`, such as another copy of this one) is refused, so the
+  mod never runs twice. Going through Nucleus's `CreateHook` instead would make MinHook refuse any
+  Nucleus mod that hooks the same function later.
 - **Which pickups are shown.** A pickup is shown once the player has found it, by coming close enough
   to see it: within the fog of war's radius (`w.vision_radius`, the player's body's, 1000 by default)
   where the map's light (the game's `light_value`) is normal (0.5) or brighter, closing in to 400 units
@@ -153,6 +165,10 @@ The hot reload host swaps in each new build of the mod while the game keeps runn
 3. Edit, then `cargo build --release` while the game runs. About a second after the build finishes,
    the running build removes its hooks, restores what it changed and unloads, and the new build takes
    its place.
+
+The host isn't a Nucleus mod. To develop with Nucleus's mods running too, launch with Nucleus, inject
+the host with `primordialis_qol_inject.exe`, and keep the mod out of Nucleus's `mods` folder: Nucleus
+would start that copy as well.
 
 The host loads copies of the mod from `target\release\hot_reload\`, so builds can overwrite the
 original. It logs to `primordialis_qol_hot_reload.log`; the mod keeps logging to `primordialis_qol.log`.

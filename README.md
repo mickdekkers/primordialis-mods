@@ -61,16 +61,24 @@ it feels like part of the game.
 
 To update, close the game and replace `primordialis_qol.dll` with the new one.
 
-The mod keeps a few files of its own in the game folder: its settings (`primordialis_qol.toml`), a log
-(`primordialis_qol.log`, and the one from the time before in `primordialis_qol.log.bak`), the cells
-you've found in your current run and sandbox (`primordialis_qol_detected.bin`), and a
-`primordialis_qol_cache` folder (about 10 MB) with the debug information it reads from the game.
+**With the Nucleus mod loader:** if your launch option already loads Nucleus, keep it as it is and skip
+step 3. Instead of the game folder, put `primordialis_qol.dll` in a new folder named `primordialis_qol`
+inside Nucleus's `mods` folder (so `mods\primordialis_qol\primordialis_qol.dll`), which keeps the mod's
+own files together. If your mod manager lists which mods are enabled, enable it there. The mod works
+alongside the other Nucleus mods.
+
+The mod keeps a few files of its own next to `primordialis_qol.dll`: its settings
+(`primordialis_qol.toml`), a log (`primordialis_qol.log`, and the one from the time before in
+`primordialis_qol.log.bak`), the cells you've found in your current run and sandbox
+(`primordialis_qol_detected.bin`), and a `primordialis_qol_cache` folder (about 10 MB) with the debug
+information it reads from the game.
 
 ## Is it safe?
 
 - **Your game files and saves are left alone.** The mod loads through `--customdll`, the game's own
-  option for loading mods, and doesn't change any game files. It only writes its own files: settings,
-  log, the cells you've found, and cache. Remove the launch option and the game is exactly as it was.
+  option for loading mods (or through Nucleus), and doesn't change any game files. It only writes its
+  own files: settings, log, the cells you've found, and cache. Remove the mod and the game is exactly
+  as it was.
 - **It only changes what you see.** It draws on the map and in the menus, and doesn't change how the
   game plays.
 - **It never goes online.**
@@ -90,9 +98,9 @@ so one may occasionally flag it. The VirusTotal report for each release shows wh
 
 ## Settings
 
-To change a setting, open `primordialis_qol.toml` in the game folder with Notepad, change `true` to
-`false` (or back), and save. Changes apply right away, even while the game is running. Everything is on
-by default.
+To change a setting, open `primordialis_qol.toml` (next to `primordialis_qol.dll`) with Notepad,
+change `true` to `false` (or back), and save. Changes apply right away, even while the game is running.
+Everything is on by default.
 
 | Setting | What it does |
 |---|---|
@@ -108,10 +116,11 @@ move around a little first.
 
 If there are still none, look at the bottom-left corner of the main menu: with the mod loaded, it shows
 "QoL mod" and its version under the game's version. If it doesn't, look for `primordialis_qol.log`
-in the game folder:
+next to `primordialis_qol.dll`:
 
 - **There's no log:** the game didn't load the mod. Check that `primordialis_qol.dll` is right next to
-  `primordialis.exe`, and that the launch option is exactly as above, quotes included.
+  `primordialis.exe`, and that the launch option is exactly as above, quotes included. With Nucleus,
+  check that the DLL is in `mods\primordialis_qol`, and that the mod is enabled.
 - **There's a log:** its last lines say what went wrong. If it says the mod is "not active" after a game
   update, the mod needs an update too: check for a [new release](../../releases).
 
@@ -126,10 +135,13 @@ Remove the launch option. You can then delete `primordialis_qol.dll`, `primordia
 `primordialis_qol.log`, `primordialis_qol.log.bak`, `primordialis_qol_detected.bin` and the
 `primordialis_qol_cache` folder from the game folder.
 
+With Nucleus, keep the launch option and delete the `mods\primordialis_qol` folder.
+
 ## Compatibility
 
 Made for Primordialis v0.2 beta on Windows (64-bit), and works with both versions the game comes in
-(AVX and SSE3). It hasn't been tried on Linux or the Steam Deck through Proton.
+(AVX and SSE3). It hasn't been tried on Linux or the Steam Deck through Proton. It can be loaded by
+the [Nucleus](https://github.com/u0068/PrimordialisSDK) mod loader, together with the mods that use it.
 The mod finds what it needs in the game by name rather than relying on one exact version, so it often
 keeps working after a game update. When it can't, it turns itself off (see above).
 

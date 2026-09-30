@@ -1,5 +1,6 @@
 //! Where the mod's DLL and the game's executable are.
 
+use std::ffi::CStr;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::ptr;
@@ -8,7 +9,7 @@ use windows_sys::Win32::Foundation::{HMODULE, MAX_PATH};
 use windows_sys::Win32::System::Diagnostics::Debug::IMAGE_NT_HEADERS64;
 use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-    GetModuleFileNameW, GetModuleHandleExW, GetModuleHandleW,
+    GetModuleFileNameW, GetModuleHandleExW, GetModuleHandleW, GetProcAddress,
 };
 use windows_sys::Win32::System::SystemServices::IMAGE_DOS_HEADER;
 
@@ -16,20 +17,27 @@ use crate::Result;
 
 /// The mod DLL's module handle (this crate is linked into it).
 pub fn own() -> Result<HMODULE> {
+    containing(own as *const () as usize).ok_or_else(|| "cannot find the mod's own module".into())
+}
+
+/// The loaded module whose image contains `address`, if any.
+pub fn containing(address: usize) -> Option<HMODULE> {
     let mut module = ptr::null_mut();
-    // SAFETY: Looks up the module containing this function, without changing its reference count.
+    // SAFETY: Only looks the address up, without changing the module's reference count.
     let found = unsafe {
         GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            own as *const u16,
+            address as *const u16,
             &mut module,
         )
     };
-    if found == 0 {
-        Err("cannot find the mod's own module".into())
-    } else {
-        Ok(module)
-    }
+    (found != 0).then_some(module)
+}
+
+/// Whether `module` exports a function or variable named `name`.
+pub fn exports(module: HMODULE, name: &CStr) -> bool {
+    // SAFETY: A loaded module and a NUL-terminated name; only looks the export up.
+    unsafe { GetProcAddress(module, name.as_ptr().cast()) }.is_some()
 }
 
 /// The address range of the mod DLL.
@@ -66,5 +74,26 @@ pub fn path(module: HMODULE) -> Result<PathBuf> {
             return Ok(PathBuf::from(String::from_utf16_lossy(&buffer)));
         }
         buffer.resize(buffer.len() * 2, 0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_modules_and_their_exports() {
+        let name: Vec<u16> = "kernel32.dll".encode_utf16().chain(Some(0)).collect();
+        // SAFETY: A NUL-terminated module name; kernel32 is always loaded.
+        let kernel32 = unsafe { GetModuleHandleW(name.as_ptr()) };
+        assert!(!kernel32.is_null());
+        // SAFETY: A loaded module and a NUL-terminated name.
+        let function = unsafe { GetProcAddress(kernel32, c"GetProcAddress".as_ptr().cast()) };
+        assert_eq!(containing(function.unwrap() as usize), Some(kernel32));
+        assert!(exports(kernel32, c"GetProcAddress"));
+        assert!(!exports(kernel32, c"modkit_api_version"));
+
+        let heap = Box::new(0u8);
+        assert_eq!(containing(&*heap as *const u8 as usize), None);
     }
 }
