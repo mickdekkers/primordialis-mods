@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.0 (2026-09-30)
+
+### Added
+
+- The mod can be loaded by the Nucleus mod loader, alongside Nucleus mods: put it in a primordialis_qol folder inside Nucleus's mods folder (see the README).
 ## 0.2.5 (2026-09-29)
 
 ### Added
