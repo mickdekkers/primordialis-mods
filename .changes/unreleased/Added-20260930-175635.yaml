@@ -1,0 +1,3 @@
+kind: Added
+body: 'The mod can be loaded by the Nucleus mod loader, alongside Nucleus mods: put it in a primordialis_qol folder inside Nucleus''s mods folder (see the README).'
+time: 2026-09-30T17:56:35.1499029+02:00

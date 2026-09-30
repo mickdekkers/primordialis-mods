@@ -3,7 +3,8 @@
 //! handled here:
 //!
 //! - **Loading**: [`entry!`] turns a crate into a mod DLL, loaded by the game's `--customdll` launch
-//!   option or by the hot reload host, which swaps in new builds while the game runs.
+//!   option, by the Nucleus mod loader, or by the hot reload host, which swaps in new builds while the
+//!   game runs.
 //! - **Game bindings** ([`game`]): functions, globals and struct layouts are looked up by name in the
 //!   debug symbols the game ships, so nothing is tied to one game build. If anything doesn't match,
 //!   the mod stays off and the game runs unmodified.
@@ -42,8 +43,8 @@ type Result<T> = std::result::Result<T, String>;
 #[global_allocator]
 static TEST_ALLOCATOR: alloc::PrivateHeap = alloc::PrivateHeap;
 
-/// Turns the crate into a mod DLL: defines its entry points (`DllMain`, and the exports the hot
-/// reload host calls), and makes it allocate from its own heap. Call it once, in the crate root of a
+/// Turns the crate into a mod DLL: defines its entry points (`DllMain`, Nucleus's `Initialise`, and
+/// the exports the hot reload host calls), and makes it allocate from its own heap. Call it once, in the crate root of a
 /// `cdylib`, with the mod's [`Mod`] definition:
 ///
 /// ```ignore
@@ -73,6 +74,18 @@ macro_rules! entry {
         ) -> $crate::__private::BOOL {
             // SAFETY: Called by Windows as `DllMain`.
             unsafe { $crate::__private::dll_main(&__MODKIT_MOD, module, reason, reserved) }
+        }
+
+        /// Called by the Nucleus mod loader after it loads the DLL, with its API, the mod's path
+        /// and its name. The mod needs none of them: it finds and hooks what it needs itself.
+        #[unsafe(no_mangle)]
+        #[allow(non_snake_case)]
+        pub extern "C" fn Initialise(
+            _nucleus: *const ::core::ffi::c_void,
+            _mod_path: *const ::core::ffi::c_char,
+            _mod_name: *const ::core::ffi::c_char,
+        ) {
+            $crate::__private::initialise(&__MODKIT_MOD)
         }
 
         // The export names are `modkit_protocol::EXPORT_*`.
@@ -106,7 +119,7 @@ macro_rules! entry {
 #[doc(hidden)]
 pub mod __private {
     pub use crate::alloc::PrivateHeap;
-    pub use crate::lifecycle::{dll_main, prepare, start, stop};
+    pub use crate::lifecycle::{dll_main, initialise, prepare, start, stop};
     pub use modkit_protocol::API_VERSION;
     pub use windows_sys::Win32::Foundation::HMODULE;
     pub use windows_sys::core::BOOL;

@@ -2,7 +2,8 @@
 
 A Rust mod for the game Primordialis (Windows, x64). It shows cell pickup icons on the map, and moves
 the Echolocation mutation's markers out of rock. Players install it with the game's own
-`--customdll "primordialis_qol.dll"` launch option; no game files are modified.
+`--customdll "primordialis_qol.dll"` launch option, or as a mod of the Nucleus mod loader (which calls
+its `Initialise` export); no game files are modified.
 
 ## Architecture
 
