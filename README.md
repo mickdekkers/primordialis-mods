@@ -8,13 +8,15 @@
 
 A small quality-of-life mod for Primordialis: keep track of cells you've come across on the map.
 
-![The map, with an icon for every cell pickup you've seen](docs/screenshots/map-icons.jpg)
+![A screen recording displaying the map and cell icons being interacted with](docs/screenshots/demo-recording.webp)
 
 ## What it does
 
 **See every cell you've discovered on the map.** Each cell pickup you've seen shows up on the map with its own icon,
 drawn just like the pickup looks in the world. Combo cells get their shifting colors and a ring of
 rainbow dots, like the sparkle around them in the world.
+
+![The map, with an icon for every cell pickup you've seen](docs/screenshots/map-icons.jpg)
 
 **Only what you've seen.** A cell shows up once you've been close enough to see it: as far as the fog
 clears around you, and closer the darker it is, so dark areas, meant to be searched with a light cell,
