@@ -62,7 +62,9 @@ pub fn error(message: &str) {
 fn write(level: &str, message: &str) {
     let mut log = LOG.lock().unwrap_or_else(PoisonError::into_inner);
     let Some(file) = log.as_mut() else { return };
-    let _ = writeln!(file, "[{}] {level}: {message}", local_time());
+    // In one write: appended as a whole, even between lines another build writes to the log.
+    let line = format!("[{}] {level}: {message}\n", local_time());
+    let _ = file.write_all(line.as_bytes());
     let _ = file.flush();
 }
 
@@ -100,7 +102,10 @@ mod tests {
         // The next build swapped in.
         init(&path);
         info("after a hot reload");
+        warn("a warning");
+        error("an error");
         close();
+        info("after closing");
         let log = fs::read_to_string(&path).unwrap();
         let header = format!("log of process {}", std::process::id());
         assert!(log.lines().next().unwrap().ends_with(&header), "{log}");
@@ -114,6 +119,24 @@ mod tests {
             assert!(log.contains(line), "{line}: {log}");
         }
         assert!(!log.contains("the last run"));
+        assert!(!log.contains("after closing"), "{log}");
+        assert!(
+            log.contains(
+                "] warn: a warning
+"
+            ) && log.contains(
+                "] error: an error
+"
+            )
+        );
+        for line in log.lines().filter(|line| line.contains("] info: ")) {
+            // [2026-09-30 12:34:56.789]
+            let time = &line[1..24];
+            let digits = time.bytes().filter(u8::is_ascii_digit).count();
+            assert!(line.starts_with('[') && &line[24..26] == "] ", "{line}");
+            assert_eq!(digits, 17, "{line}");
+            assert_eq!(&time[4..5], "-", "{line}");
+        }
         assert!(
             fs::read_to_string(&backup)
                 .unwrap()

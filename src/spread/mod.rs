@@ -446,6 +446,41 @@ mod tests {
     use super::hex::hex_ring;
     use super::*;
 
+    /// Where tests put icons: at two map zoom levels (icon radii), one of them far from the origin,
+    /// since nothing should depend on either.
+    #[derive(Clone, Copy, Debug)]
+    struct Place {
+        radius: f32,
+        origin: Real2,
+    }
+
+    const PLACES: [Place; 2] = [
+        Place {
+            radius: 1.0,
+            origin: Real2::new(0.0, 0.0),
+        },
+        Place {
+            radius: 3.0,
+            origin: Real2::new(1234.5, -987.25),
+        },
+    ];
+
+    impl Place {
+        /// `x` and `y` icon radii from the origin.
+        fn at(self, x: f32, y: f32) -> Real2 {
+            Real2::new(
+                self.origin.x + x * self.radius,
+                self.origin.y + y * self.radius,
+            )
+        }
+
+        fn all(self, points: &[(f32, f32)]) -> Vec<Real2> {
+            points.iter().map(|&(x, y)| self.at(x, y)).collect()
+        }
+    }
+
+    const SIN_60: f32 = 0.866_025_4;
+
     fn build(positions: &[Real2], anchor: usize, radius: f32) -> Grid {
         let pickups: Vec<usize> = (0..positions.len()).collect();
         Grid::new(&mut Scratch::default(), &pickups, positions, anchor, radius)
@@ -461,9 +496,23 @@ mod tests {
         gap
     }
 
-    /// Checks a grid: its icons are a spacing apart, no icon off it is too close to one on it, and
-    /// none that the mouse could point at while it's open is overlapped by another.
+    fn on_grid(grid: &Grid) -> Vec<usize> {
+        let mut pickups: Vec<usize> = grid.spots.iter().map(|s| s.pickup).collect();
+        pickups.sort_unstable();
+        pickups
+    }
+
+    /// Checks a grid: each pickup is on it once, its icons are a spacing apart, no icon off it is too
+    /// close to one on it, and none that the mouse could point at while it's open is overlapped by
+    /// another.
     fn check(grid: &Grid, positions: &[Real2], radius: f32) {
+        let on = on_grid(grid);
+        assert!(on.windows(2).all(|w| w[0] != w[1]), "{on:?}");
+        for icon in 0..positions.len() {
+            let is_on = grid.on_grid.get(icon).copied().unwrap_or(false);
+            assert_eq!(is_on, on.binary_search(&icon).is_ok(), "{icon}");
+        }
+
         let lattice = grid.lattice(SPACING * radius);
         let spots: Vec<Real2> = grid.spots.iter().map(|s| lattice.position(s.hex)).collect();
         assert!(min_gap(&spots) > SPACING * radius - 1e-3, "{spots:?}");
@@ -490,154 +539,349 @@ mod tests {
 
     #[test]
     fn a_pile_spreads_around_the_anchor() {
-        let positions: Vec<Real2> = (0..10)
-            .map(|i| Real2::new((i % 3) as f32 * 0.1, (i / 3) as f32 * 0.1))
-            .collect();
-        let grid = build(&positions, 4, 1.0);
-        assert_eq!(grid.spots.len(), 10);
-        assert_eq!(
-            grid.spots[0].hex,
-            Hex { q: 0, r: 0 },
-            "the anchor stays put"
-        );
-        check(&grid, &positions, 1.0);
-        assert!(grid.keeps_open(1.0, positions[4]));
-        assert!(!grid.keeps_open(1.0, Real2::new(30.0, 0.0)));
+        for place in PLACES {
+            let points: Vec<(f32, f32)> = (0..10)
+                .map(|i| ((i % 3) as f32 * 0.1, (i / 3) as f32 * 0.1))
+                .collect();
+            let positions = place.all(&points);
+            let grid = build(&positions, 4, place.radius);
+            assert_eq!(grid.spots.len(), 10, "{place:?}");
+            assert_eq!(
+                grid.spots[0].hex,
+                Hex { q: 0, r: 0 },
+                "the anchor stays put"
+            );
+            check(&grid, &positions, place.radius);
+        }
     }
 
     #[test]
     fn icons_near_the_grid_join_it() {
         // A pile of three, an icon that ends up near once they spread out, one near that, and one
         // far away.
-        let positions = [
-            Real2::new(0.0, 0.0),
-            Real2::new(0.1, 0.0),
-            Real2::new(0.0, 0.1),
-            Real2::new(3.5, 0.0),
-            Real2::new(5.5, 0.5),
-            Real2::new(40.0, 0.0),
-        ];
-        let grid = build(&positions, 0, 1.0);
-        let mut pickups: Vec<usize> = grid.spots.iter().map(|s| s.pickup).collect();
-        pickups.sort_unstable();
-        assert_eq!(pickups, [0, 1, 2, 3, 4]);
-        check(&grid, &positions, 1.0);
+        for place in PLACES {
+            let positions = place.all(&[
+                (0.0, 0.0),
+                (0.1, 0.0),
+                (0.0, 0.1),
+                (3.5, 0.0),
+                (5.5, 0.5),
+                (40.0, 0.0),
+            ]);
+            let grid = build(&positions, 0, place.radius);
+            assert_eq!(on_grid(&grid), [0, 1, 2, 3, 4], "{place:?}");
+            check(&grid, &positions, place.radius);
+        }
+    }
+
+    #[test]
+    fn an_icon_too_close_to_a_spot_joins() {
+        // A pair, the second of which moves a spacing along x, and an icon near where it moves to,
+        // which overlaps no other.
+        for place in PLACES {
+            let positions = place.all(&[(0.0, 0.0), (0.1, 0.0), (4.0, 0.0), (9.0, 0.0)]);
+            let grid = build(&positions, 0, place.radius);
+            assert_eq!(on_grid(&grid), [0, 1, 2], "{place:?}");
+            check(&grid, &positions, place.radius);
+        }
     }
 
     #[test]
     fn lone_icons_make_no_grid() {
-        let positions = [Real2::new(0.0, 0.0), Real2::new(5.0, 0.0)];
-        assert_eq!(build(&positions, 0, 1.0).spots.len(), 1);
+        for place in PLACES {
+            let positions = place.all(&[(0.0, 0.0), (5.0, 0.0)]);
+            assert_eq!(build(&positions, 0, place.radius).spots.len(), 1);
+        }
+    }
+
+    #[test]
+    fn the_grid_stays_open_within_its_margin() {
+        let margin = KEEP_OPEN_MARGIN;
+        for place in PLACES {
+            // A pair: the anchor, and the other moved a spacing along x.
+            let positions = place.all(&[(0.0, 0.0), (0.1, 0.0)]);
+            let grid = build(&positions, 0, place.radius);
+            let open = |x: f32, y: f32| grid.keeps_open(place.radius, place.at(x, y));
+            assert!(open(1.0, 0.0), "{place:?}");
+            // Straight up from its edge, just the margin; out past its right corner, up to 2 / √3
+            // times as far.
+            assert!(open(0.0, margin - 0.05) && !open(0.0, margin + 0.05));
+            let past_corner = SPACING + margin / SIN_60;
+            assert!(open(past_corner - 0.05, 0.0) && !open(past_corner + 0.05, 0.0));
+        }
     }
 
     #[test]
     fn the_grid_stays_open_over_its_gaps() {
         // A ring of icons around an empty middle, three spacings out, with two piled up so there's
         // a grid.
-        let lattice = Lattice {
-            origin: Real2::new(0.0, 0.0),
-            spacing: SPACING,
-        };
-        let mut positions: Vec<Real2> = hex_ring(Hex { q: 0, r: 0 }, 3)
-            .map(|hex| lattice.position(hex))
-            .collect();
-        positions.push(positions[0]);
-        let grid = build(&positions, 0, 1.0);
-        assert_eq!(grid.spots.len(), positions.len());
-        check(&grid, &positions, 1.0);
-        assert!(grid.keeps_open(1.0, Real2::new(0.0, 0.0)));
-        assert!(!grid.keeps_open(1.0, Real2::new(0.0, 30.0)));
+        for place in PLACES {
+            let lattice = Lattice {
+                origin: place.origin,
+                spacing: SPACING * place.radius,
+            };
+            let mut positions: Vec<Real2> = hex_ring(Hex { q: 0, r: 0 }, 3)
+                .map(|hex| lattice.position(hex))
+                .collect();
+            positions.push(positions[0]);
+            let grid = build(&positions, 0, place.radius);
+            assert_eq!(grid.spots.len(), positions.len());
+            check(&grid, &positions, place.radius);
+            assert!(grid.keeps_open(place.radius, place.at(0.0, 0.0)));
+            assert!(!grid.keeps_open(place.radius, place.at(0.0, 30.0)));
+        }
     }
 
     #[test]
     fn overlapping_icons_within_reach_join() {
         // A pile of two, then past the grid's edge: a pair overlapping each other and a lone icon
         // within the margin, and a pair beyond it.
-        let positions = [
-            Real2::new(0.0, 0.0),
-            Real2::new(0.1, 0.0),
-            Real2::new(5.5, 0.0),
-            Real2::new(6.0, 0.5),
-            Real2::new(0.0, 6.0),
-            Real2::new(30.0, 0.0),
-            Real2::new(30.5, 0.0),
-        ];
-        let grid = build(&positions, 0, 1.0);
-        check(&grid, &positions, 1.0);
-        let on = |icon: usize| grid.on_grid[icon];
-        assert!(on(2) && on(3), "the pair within reach joins");
-        assert!(!on(4), "the lone icon stays");
-        assert!(!on(5) && !on(6), "the pair out of reach stays");
+        for place in PLACES {
+            let positions = place.all(&[
+                (0.0, 0.0),
+                (0.1, 0.0),
+                (5.5, 0.0),
+                (6.0, 0.5),
+                (0.0, 6.0),
+                (30.0, 0.0),
+                (30.5, 0.0),
+            ]);
+            let grid = build(&positions, 0, place.radius);
+            check(&grid, &positions, place.radius);
+            let on = |icon: usize| grid.on_grid[icon];
+            assert!(on(2) && on(3), "the pair within reach joins");
+            assert!(!on(4), "the lone icon stays");
+            assert!(!on(5) && !on(6), "the pair out of reach stays");
+        }
+    }
+
+    #[test]
+    fn icons_within_reach_join_if_overlapped_from_beyond_it() {
+        // A pair, the second of which moves a spacing along x. Straight up from the grid's edge: an
+        // icon just within reach, overlapped by one further out.
+        let reach = KEEP_OPEN_MARGIN + HOVER_DISTANCE;
+        for place in PLACES {
+            let positions = place.all(&[
+                (0.0, 0.0),
+                (0.1, 0.0),
+                (0.0, reach - 0.1),
+                (0.0, reach + 1.9),
+            ]);
+            let grid = build(&positions, 0, place.radius);
+            assert!(grid.on_grid[2], "{place:?}");
+            check(&grid, &positions, place.radius);
+        }
+    }
+
+    #[test]
+    fn icons_overlapping_by_a_little_join() {
+        // A pile of two, and below the grid, a pair of icons just close enough to overlap.
+        let apart = OVERLAP_DISTANCE - 0.2;
+        for place in PLACES {
+            let positions = place.all(&[(0.0, 0.0), (0.1, 0.0), (0.0, -4.0), (apart, -4.0)]);
+            let grid = build(&positions, 0, place.radius);
+            assert!(grid.on_grid[2] && grid.on_grid[3], "{place:?}");
+            check(&grid, &positions, place.radius);
+        }
+    }
+
+    #[test]
+    fn overlapping_icons_are_found_across_square_borders() {
+        // Icons are looked up by squares `clear` wide. Far from the origin: a pile of two, and past
+        // it along x, a pair overlapping each other on either side of a border between squares.
+        for place in PLACES {
+            let (radius, clear) = (place.radius, CLEAR_DISTANCE * place.radius);
+            let border = (place.origin.x / clear).round() * clear + 173.0 * clear;
+            let at = |x: f32| Real2::new(border + x * radius, place.origin.y);
+            let positions = [at(-5.0), at(-4.9), at(-0.25), at(0.35)];
+            let grid = build(&positions, 0, radius);
+            assert!(grid.on_grid[2] && grid.on_grid[3], "{place:?}");
+            check(&grid, &positions, radius);
+        }
     }
 
     #[test]
     fn growing_keeps_icons_on_their_spots() {
         // Icons in a row, 3 radii apart: a pair at one end makes a grid, which zooming out (larger
         // icons) makes reach further along the row.
-        let mut positions: Vec<Real2> = (0..12).map(|i| Real2::new(i as f32 * 3.0, 0.0)).collect();
-        positions.push(Real2::new(0.1, 0.0));
-        let pickups: Vec<usize> = (0..positions.len()).collect();
-        let mut scratch = Scratch::default();
-        let mut grid = Grid::new(&mut scratch, &pickups, &positions, 0, 1.0);
-        let before: Vec<(usize, Hex)> = grid.spots.iter().map(|s| (s.pickup, s.hex)).collect();
-        grid.grow(&mut scratch, &pickups, &positions, 1.6);
-        assert!(grid.spots.len() > before.len());
-        for (spot, &(pickup, hex)) in grid.spots.iter().zip(&before) {
-            assert_eq!((spot.pickup, spot.hex), (pickup, hex));
+        for place in PLACES {
+            let mut points: Vec<(f32, f32)> = (0..12).map(|i| (i as f32 * 3.0, 0.0)).collect();
+            points.push((0.1, 0.0));
+            let positions = place.all(&points);
+            let pickups: Vec<usize> = (0..positions.len()).collect();
+            let mut scratch = Scratch::default();
+            let mut grid = Grid::new(&mut scratch, &pickups, &positions, 0, place.radius);
+            let before: Vec<(usize, Hex)> = grid.spots.iter().map(|s| (s.pickup, s.hex)).collect();
+            let zoomed_out = place.radius * 1.6;
+            grid.grow(&mut scratch, &pickups, &positions, zoomed_out);
+            assert!(grid.spots.len() > before.len());
+            for (spot, &(pickup, hex)) in grid.spots.iter().zip(&before) {
+                assert_eq!((spot.pickup, spot.hex), (pickup, hex));
+            }
+            check(&grid, &positions, zoomed_out);
         }
-        check(&grid, &positions, 1.6);
     }
 
-    /// Three icons piled up at the origin.
-    const PILE: [Real2; 3] = [
-        Real2::new(0.0, 0.0),
-        Real2::new(0.1, 0.0),
-        Real2::new(0.0, 0.1),
-    ];
+    #[test]
+    fn the_mouse_reaches_between_the_icons_of_a_grid() {
+        // The middle of a triangle of neighboring spots is as far from each as the mouse reaches.
+        let lattice = Lattice {
+            origin: Real2::new(0.0, 0.0),
+            spacing: SPACING,
+        };
+        let triangle = [Hex { q: 0, r: 0 }, Hex { q: 1, r: 0 }, Hex { q: 0, r: 1 }]
+            .map(|hex| lattice.position(hex));
+        let middle = Real2::new(
+            triangle.iter().map(|p| p.x).sum::<f32>() / 3.0,
+            triangle.iter().map(|p| p.y).sum::<f32>() / 3.0,
+        );
+        for corner in triangle {
+            assert!((corner.distance(middle) - GRID_HOVER_DISTANCE).abs() < 1e-5);
+        }
+    }
+
+    /// Three icons piled up.
+    fn pile(place: Place) -> Vec<Real2> {
+        place.all(&[(0.0, 0.0), (0.1, 0.0), (0.0, 0.1)])
+    }
 
     #[test]
     fn a_pile_spreads_out_under_the_mouse_and_collapses_once_it_leaves() {
-        let id = PickupsId::for_tests(0x1000, 3);
-        let pickups = [0, 1, 2];
-        let mut spread = Spread::default();
-        let mut update = |mouse: Real2, frame_number: i32| {
-            spread.update(id, &pickups, &PILE, 1.0, Some(mouse), frame_number);
-            spread
-                .moved()
-                .iter()
-                .map(|m| m.progress)
-                .collect::<Vec<_>>()
-        };
-        let (over, away) = (PILE[0], Real2::new(100.0, 0.0));
-        assert_eq!(update(over, 0), [0.0; 3], "no time has passed");
-        let halfway = update(over, OPEN_TICKS as i32 / 2);
-        assert!(halfway.iter().all(|&p| p > 0.0 && p < 1.0), "{halfway:?}");
-        assert_eq!(update(over, OPEN_TICKS as i32), [1.0; 3]);
+        for place in PLACES {
+            let id = PickupsId::for_tests(0x1000, 3);
+            let (pickups, positions) = ([0, 1, 2], pile(place));
+            let mut spread = Spread::default();
+            let mut update = |mouse: Real2, frame_number: i32| {
+                spread.update(
+                    id,
+                    &pickups,
+                    &positions,
+                    place.radius,
+                    Some(mouse),
+                    frame_number,
+                );
+                spread.moved().to_vec()
+            };
+            let progress = |moved: &[Moved]| moved.iter().map(|m| m.progress).collect::<Vec<_>>();
+            let (over, away) = (positions[0], place.at(100.0, 0.0));
+            assert_eq!(progress(&update(over, 0)), [0.0; 3], "no time has passed");
+            let halfway = update(over, OPEN_TICKS as i32 / 2);
+            assert_eq!(progress(&halfway), [0.5; 3]);
+            let open = update(over, OPEN_TICKS as i32);
+            assert_eq!(progress(&open), [1.0; 3]);
+            let spots: Vec<Real2> = open.iter().map(|m| m.to).collect();
+            assert!((min_gap(&spots) - SPACING * place.radius).abs() < 1e-3);
+            for moved in &open {
+                assert!(moved.from.same_bits(positions[moved.icon]));
+            }
 
-        let closing = update(away, (OPEN_TICKS + CLOSE_TICKS / 2.0) as i32);
-        assert!(closing.iter().all(|&p| p > 0.0 && p < 1.0), "{closing:?}");
-        assert!(update(away, (OPEN_TICKS + CLOSE_TICKS) as i32).is_empty());
-        assert!(spread.grid.is_none(), "a collapsed grid is gone");
+            let closing = update(away, (OPEN_TICKS + CLOSE_TICKS / 2.0) as i32);
+            assert_eq!(progress(&closing), [0.5; 3]);
+            assert!(update(away, (OPEN_TICKS + CLOSE_TICKS) as i32).is_empty());
+            assert!(spread.grid.is_none(), "a collapsed grid is gone");
+        }
+    }
+
+    #[test]
+    fn a_long_frame_collapses_the_grid_at_once() {
+        let id = PickupsId::for_tests(0x1000, 3);
+        let positions = pile(PLACES[0]);
+        let (over, away) = (Some(positions[0]), Some(Real2::new(100.0, 0.0)));
+        let mut spread = Spread::default();
+        spread.update(id, &[0, 1, 2], &positions, 1.0, over, 0);
+        spread.update(id, &[0, 1, 2], &positions, 1.0, over, OPEN_TICKS as i32);
+        spread.update(id, &[0, 1, 2], &positions, 1.0, away, 100);
+        assert!(spread.moved().is_empty() && spread.grid.is_none());
+    }
+
+    #[test]
+    fn the_mouse_opens_a_grid_within_reach_of_an_icon() {
+        for place in PLACES {
+            let id = PickupsId::for_tests(0x1000, 3);
+            let positions = pile(place);
+            let opens = |x: f32| {
+                let mut spread = Spread::default();
+                let mouse = Some(place.at(x, 0.0));
+                spread.update(id, &[0, 1, 2], &positions, place.radius, mouse, 0);
+                !spread.moved().is_empty()
+            };
+            assert!(opens(-(HOVER_DISTANCE - 0.05)), "{place:?}");
+            assert!(!opens(-(HOVER_DISTANCE + 0.05)), "{place:?}");
+        }
+    }
+
+    #[test]
+    fn only_icons_near_each_other_make_a_grid() {
+        for place in PLACES {
+            let id = PickupsId::for_tests(0x1000, 2);
+            let grid_under_mouse = |gap: f32| {
+                let positions = place.all(&[(0.0, 0.0), (gap, 0.0)]);
+                let mut spread = Spread::default();
+                let mouse = Some(positions[0]);
+                spread.update(id, &[0, 1], &positions, place.radius, mouse, 0);
+                !spread.moved().is_empty()
+            };
+            assert!(grid_under_mouse(CLEAR_DISTANCE - 0.05), "{place:?}");
+            assert!(!grid_under_mouse(CLEAR_DISTANCE + 0.05), "{place:?}");
+        }
+    }
+
+    #[test]
+    fn a_lone_icon_makes_no_grid_even_near_a_pile() {
+        // A lone icon, and a pair overlapping each other, which would join a grid around it.
+        for place in PLACES {
+            let positions = place.all(&[(0.0, 0.0), (4.0, 0.0), (4.0, 0.6)]);
+            let id = PickupsId::for_tests(0x1000, 3);
+            let mut spread = Spread::default();
+            let mouse = Some(positions[0]);
+            spread.update(id, &[0, 1, 2], &positions, place.radius, mouse, 0);
+            assert!(spread.moved().is_empty(), "{place:?}");
+            let mouse = Some(positions[1]);
+            spread.update(id, &[0, 1, 2], &positions, place.radius, mouse, 1);
+            assert_eq!(spread.moved().len(), 2, "the pair makes one");
+        }
+    }
+
+    #[test]
+    fn icons_without_a_size_collapse_the_grid() {
+        let id = PickupsId::for_tests(0x1000, 3);
+        let positions = pile(PLACES[0]);
+        let over = Some(positions[0]);
+        for radius in [0.0, -1.0, f32::INFINITY, f32::NAN] {
+            let mut spread = Spread::default();
+            spread.update(id, &[0, 1, 2], &positions, 1.0, over, 0);
+            spread.update(id, &[0, 1, 2], &positions, 1.0, over, 10);
+            spread.update(id, &[0, 1, 2], &positions, radius, over, 11);
+            assert!(
+                spread.moved().is_empty() && spread.grid.is_none(),
+                "{radius}"
+            );
+        }
     }
 
     #[test]
     fn a_new_pickup_array_collapses_the_grid_at_once() {
         let pickups = [0, 1, 2];
+        let positions = pile(PLACES[0]);
         let mut spread = Spread::default();
         let id = PickupsId::for_tests(0x1000, 3);
-        spread.update(id, &pickups, &PILE, 1.0, Some(PILE[0]), 0);
-        spread.update(id, &pickups, &PILE, 1.0, Some(PILE[0]), 30);
+        spread.update(id, &pickups, &positions, 1.0, Some(positions[0]), 0);
+        spread.update(id, &pickups, &positions, 1.0, Some(positions[0]), 30);
         assert_eq!(spread.moved().len(), 3);
         let other = PickupsId::for_tests(0x2000, 3);
-        spread.update(other, &pickups, &PILE, 1.0, None, 31);
+        spread.update(other, &pickups, &positions, 1.0, None, 31);
         assert!(spread.moved().is_empty() && spread.grid.is_none());
     }
 
     #[test]
     fn pointing_at_another_pile_replaces_the_grid_at_once() {
         let far = Real2::new(50.0, 0.0);
-        let mut positions = PILE.to_vec();
-        positions.extend(PILE.iter().map(|p| Real2::new(p.x + far.x, p.y + far.y)));
+        let mut positions = pile(PLACES[0]);
+        let far_pile: Vec<Real2> = positions
+            .iter()
+            .map(|p| Real2::new(p.x + far.x, p.y + far.y))
+            .collect();
+        positions.extend(far_pile);
         positions.push(Real2::new(-50.0, 0.0));
         let pickups: Vec<usize> = (0..positions.len()).collect();
         let id = PickupsId::for_tests(0x1000, positions.len());
@@ -647,7 +891,7 @@ mod tests {
             icons.sort_unstable();
             icons
         };
-        spread.update(id, &pickups, &positions, 1.0, Some(PILE[0]), 0);
+        spread.update(id, &pickups, &positions, 1.0, Some(positions[0]), 0);
         assert_eq!(on_grid(&spread), [0, 1, 2]);
         spread.update(id, &pickups, &positions, 1.0, Some(far), 1);
         assert_eq!(on_grid(&spread), [3, 4, 5]);
@@ -661,22 +905,28 @@ mod tests {
     #[test]
     fn every_icon_of_a_huge_pile_joins() {
         // Thousands of icons on top of each other, as when zoomed all the way out.
-        let positions: Vec<Real2> = (0..3000)
-            .map(|i| Real2::new((i % 50) as f32 * 0.01, (i / 50) as f32 * 0.01))
-            .collect();
-        let grid = build(&positions, 0, 1.0);
-        assert_eq!(grid.spots.len(), positions.len());
-        let taken: FxHashSet<Hex> = grid.spots.iter().map(|s| s.hex).collect();
-        assert_eq!(taken.len(), positions.len(), "one icon per spot");
+        for place in PLACES {
+            let points: Vec<(f32, f32)> = (0..3000)
+                .map(|i| ((i % 50) as f32 * 0.01, (i / 50) as f32 * 0.01))
+                .collect();
+            let positions = place.all(&points);
+            let grid = build(&positions, 0, place.radius);
+            assert_eq!(grid.spots.len(), positions.len());
+            let taken: FxHashSet<Hex> = grid.spots.iter().map(|s| s.hex).collect();
+            assert_eq!(taken.len(), positions.len(), "one icon per spot");
+        }
     }
 
     #[test]
     fn a_dense_field_joins_entirely() {
-        let positions: Vec<Real2> = (0..400)
-            .map(|i| Real2::new((i % 20) as f32 * 1.0, (i / 20) as f32 * 1.0))
-            .collect();
-        let grid = build(&positions, 210, 1.0);
-        assert_eq!(grid.spots.len(), positions.len());
-        check(&grid, &positions, 1.0);
+        for place in PLACES {
+            let points: Vec<(f32, f32)> = (0..400)
+                .map(|i| ((i % 20) as f32, (i / 20) as f32))
+                .collect();
+            let positions = place.all(&points);
+            let grid = build(&positions, 210, place.radius);
+            assert_eq!(grid.spots.len(), positions.len());
+            check(&grid, &positions, place.radius);
+        }
     }
 }

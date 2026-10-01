@@ -458,6 +458,46 @@ mod tests {
             assert!(bindings.pickup_size > 0 && bindings.material_size > 0);
             assert!(bindings.light_value.is_available() && bindings.menu.is_available());
             assert!(bindings.save_slots.is_available() && bindings.open_menu.is_available());
+            // Fields of the structs inside `w` are inside those structs, where `w` has them.
+            let world = symbols.layout("world").unwrap();
+            let inside = |parent: &str, parent_type: &str, fields: &[(usize, usize)]| {
+                let start = world.offset(parent).unwrap();
+                let size = symbols.layout(parent_type).unwrap().size;
+                for &(offset, field_size) in fields {
+                    assert!(
+                        start <= offset && offset + field_size <= start + size,
+                        "{parent}: {offset:#x}"
+                    );
+                }
+            };
+            let range = bindings.map_range;
+            inside(
+                "map",
+                "map_t",
+                &[
+                    (bindings.explored, 8),
+                    (range.lower_x, 4),
+                    (range.lower_y, 4),
+                    (range.upper_x, 4),
+                    (range.upper_y, 4),
+                ],
+            );
+            assert_eq!(range.lower_y, range.lower_x + 4);
+            assert_eq!(range.upper_y, range.upper_x + 4);
+            inside(
+                "run",
+                "run_stats",
+                &[(bindings.seed, 4), (bindings.run_start_time, 8)],
+            );
+            inside(
+                "em",
+                "edit_menu",
+                &[
+                    (bindings.cell_items, 8),
+                    (bindings.n_cell_items, 4),
+                    (bindings.max_genome_size, 4),
+                ],
+            );
             let pickup = symbols.layout("cell_pickup").unwrap();
             assert!(
                 pickup.offset_of::<f64>("alpha").is_err(),

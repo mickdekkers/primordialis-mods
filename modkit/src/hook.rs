@@ -341,7 +341,7 @@ mod tests {
     use std::hint::black_box;
 
     use windows_sys::Win32::System::Memory::{
-        MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc, VirtualFree,
+        MEM_RELEASE, MEM_RESERVE, PAGE_NOACCESS, VirtualAlloc, VirtualFree, VirtualProtect,
     };
 
     type Function = extern "C" fn(u64) -> u64;
@@ -471,6 +471,15 @@ mod tests {
         commit(2, PAGE_READWRITE | PAGE_GUARD);
         // The last page stays reserved.
 
+        for protect in [PAGE_READONLY, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE] {
+            // SAFETY: Only changes the protection of a page of the reservation.
+            let changed = unsafe {
+                let mut old = 0;
+                VirtualProtect(base as *const c_void, PAGE, protect, &mut old)
+            };
+            assert_ne!(changed, 0);
+            assert_eq!(read::<u8>(base), Some(0), "{protect:#x}");
+        }
         assert_eq!(read::<u8>(base), Some(0));
         assert_eq!(read::<u32>(base + PAGE - 4), Some(0));
         // Runs into the next page.
@@ -484,5 +493,40 @@ mod tests {
 
         // SAFETY: Releases the reservation, which nothing uses anymore.
         unsafe { VirtualFree(base as *mut c_void, 0, MEM_RELEASE) };
+    }
+
+    /// The whole allocation is found from any address in it, whatever its pages' states.
+    #[test]
+    fn finds_whole_allocations() {
+        const PAGE: usize = 4096;
+        // SAFETY: Reserves four pages and commits the second, released below.
+        let base = unsafe {
+            let base = VirtualAlloc(std::ptr::null(), 4 * PAGE, MEM_RESERVE, PAGE_NOACCESS);
+            assert!(!VirtualAlloc(base.byte_add(PAGE), PAGE, MEM_COMMIT, PAGE_READWRITE).is_null());
+            base as usize
+        };
+        for address in [base, base + PAGE + 12, base + 4 * PAGE - 1] {
+            assert_eq!(allocation_range(address), Ok(base..base + 4 * PAGE));
+        }
+        // SAFETY: Releases the reservation, which nothing uses anymore.
+        unsafe { VirtualFree(base as *mut c_void, 0, MEM_RELEASE) };
+        // Freed memory belongs to no allocation, but its range still holds the address.
+        assert!(allocation_range(base + 5).unwrap().contains(&(base + 5)));
+    }
+
+    #[test]
+    fn prologues_follow_the_first_instruction() {
+        // SAFETY: Never enabled; `our_detour` has the signature of `target`.
+        let hook = unsafe { Hook::new("target", 0x1_0000, our_detour as Function, &ORIGINAL) };
+        assert_eq!(hook.prologue(), 0x1_0001..0x1_0000 + PATCH_LENGTH);
+    }
+
+    #[test]
+    fn threads_leaving_detours_are_no_longer_counted() {
+        // Other tests' detours may run meanwhile, but not a thousand at once.
+        let entered: Vec<InFlight> = (0..1000).map(|_| InFlight::enter()).collect();
+        assert!(IN_FLIGHT.load(Ordering::SeqCst) >= 1000);
+        drop(entered);
+        assert!(IN_FLIGHT.load(Ordering::SeqCst) < 1000);
     }
 }

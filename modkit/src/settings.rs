@@ -17,8 +17,12 @@ use toml::de::{DeTable, DeValue};
 
 use crate::{Result, log};
 
-/// How often the file is checked for changes.
-const WATCH_INTERVAL: Duration = Duration::from_millis(500);
+/// How often the file is checked for changes (more often in tests, which wait for it).
+const WATCH_INTERVAL: Duration = if cfg!(test) {
+    Duration::from_millis(10)
+} else {
+    Duration::from_millis(500)
+};
 
 /// A setting in the settings file.
 pub trait Setting: Sync {
@@ -126,6 +130,9 @@ struct File {
     /// Written at the top of a new file.
     header: String,
     settings: Vec<&'static dyn Setting>,
+    /// The file's version (see `file_version`) from just before `init` read it. The watcher starts
+    /// from it, so that it also reloads changes made before it started.
+    initial_version: Option<(SystemTime, u64)>,
 }
 
 static FILE: Mutex<Option<Arc<File>>> = Mutex::new(None);
@@ -161,6 +168,7 @@ pub(crate) fn init(
              # More about the mod: {homepage}\n"
         ),
         settings,
+        initial_version: file_version(path),
     };
     if !load(&file) {
         file.settings.iter().for_each(|setting| setting.reset());
@@ -212,7 +220,7 @@ pub(crate) fn stop_watching() {
 
 fn watch(file: &File, stop: &(Mutex<bool>, Condvar)) {
     let (stopped, wake) = stop;
-    let mut last = file_version(&file.path);
+    let mut last = file.initial_version;
     loop {
         let stopped = stopped.lock().unwrap_or_else(PoisonError::into_inner);
         let (stopped, _) = wake
@@ -381,6 +389,7 @@ mod tests {
             path,
             header: HEADER.to_owned(),
             settings,
+            initial_version: None,
         }
     }
 
@@ -469,6 +478,74 @@ mod tests {
             "b = false\n\n# A.\na = true\n"
         );
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_file_that_cant_be_read_changes_nothing() {
+        static A: Toggle = Toggle::new("a", true, "A.");
+        let dir = std::env::temp_dir().join(format!("modkit_settings_dir_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        A.set(&Value::Bool(false)).unwrap();
+        // A folder where the file should be.
+        assert!(!load(&test_file(dir.clone(), vec![&A])));
+        assert!(!A.get());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn settings_are_described_with_their_values() {
+        static A: Toggle = Toggle::new("a", true, "A.");
+        static B: Toggle = Toggle::new("b", false, "B.");
+        let settings: [&dyn Setting; 2] = [&A, &B];
+        assert_eq!(describe(settings.into_iter()), "a = true, b = false");
+    }
+
+    /// The only test that uses the global settings file, so that tests running in parallel don't
+    /// replace it.
+    #[test]
+    fn init_loads_the_file_and_watching_reloads_it() {
+        static A: Toggle = Toggle::new("a", true, "A.");
+        static B: Toggle = Toggle::new("b", false, "B.");
+        let dir = std::env::temp_dir().join(format!("modkit_settings_init_{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.toml");
+        let _ = fs::remove_file(&path);
+        let init = |settings: Vec<&'static dyn Setting>| {
+            super::init(&path, "Test mod", "https://example.com/mod", settings)
+        };
+
+        assert!(init(vec![&A, &B, &A]).is_err(), "two are named a");
+        init(vec![&A, &B]).unwrap();
+        let created = fs::read_to_string(&path).unwrap();
+        assert!(created.starts_with("# Test mod settings."), "{created}");
+        assert!(created.contains("https://example.com/mod"), "{created}");
+
+        // An invalid file is left alone, and the settings get their defaults.
+        fs::write(&path, "a = ").unwrap();
+        A.set(&Value::Bool(false)).unwrap();
+        init(vec![&A, &B]).unwrap();
+        assert!(A.get());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a = ");
+
+        let wait_for = |done: &dyn Fn() -> bool| {
+            let start = std::time::Instant::now();
+            while !done() && start.elapsed() < Duration::from_secs(10) {
+                thread::sleep(WATCH_INTERVAL);
+            }
+            done()
+        };
+        // Changed before watching starts, as while the mod loads the game's symbols.
+        fs::write(&path, "a = false\nb = true\n").unwrap();
+        start_watching();
+        start_watching();
+        assert!(wait_for(&|| !A.get() && B.get()), "reloaded");
+        fs::write(&path, "a = true\nb = true\n\n").unwrap();
+        assert!(wait_for(&|| A.get() && B.get()), "reloaded again");
+        stop_watching();
+        fs::write(&path, "a = false\nb = false\n# stopped\n").unwrap();
+        thread::sleep(WATCH_INTERVAL * 20);
+        assert!(A.get() && B.get(), "no longer watched");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

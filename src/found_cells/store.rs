@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::io::ErrorKind;
+use std::path::Path;
 use std::time::Instant;
 
 use modkit::{log, storage};
@@ -80,9 +81,10 @@ impl Store {
 
     /// Writes the file. Returns whether it worked.
     pub fn save(&mut self) -> bool {
-        let Some(path) = storage::path(FILE) else {
-            return false;
-        };
+        storage::path(FILE).is_some_and(|path| self.save_to(&path))
+    }
+
+    fn save_to(&mut self, path: &Path) -> bool {
         let started = Instant::now();
         let contents = Contents {
             version: VERSION,
@@ -93,7 +95,7 @@ impl Store {
         // Written next to it first, so that a crash halfway never leaves a broken file.
         let partial = path.with_extension("bin.partial");
         let written = match bytes {
-            Ok(bytes) => fs::write(&partial, bytes).and_then(|()| fs::rename(&partial, &path)),
+            Ok(bytes) => fs::write(&partial, bytes).and_then(|()| fs::rename(&partial, path)),
             Err(error) => Err(std::io::Error::other(error)),
         };
         match written {
@@ -120,16 +122,17 @@ impl Store {
     }
 
     fn runs(&mut self) -> &mut Vec<RunCells> {
-        self.runs.get_or_insert_with(read)
+        self.runs.get_or_insert_with(|| {
+            storage::path(FILE)
+                .map(|path| read(&path))
+                .unwrap_or_default()
+        })
     }
 }
 
-/// The file's runs, or none if there's no file yet or it can't be used.
-fn read() -> Vec<RunCells> {
-    let Some(path) = storage::path(FILE) else {
-        return Vec::new();
-    };
-    let bytes = match fs::read(&path) {
+/// The runs in the file at `path`, or none if there's no file yet or it can't be used.
+fn read(path: &Path) -> Vec<RunCells> {
+    let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == ErrorKind::NotFound => return Vec::new(),
         Err(error) => {
@@ -198,6 +201,69 @@ mod tests {
         assert_eq!(back.version, VERSION);
         assert_eq!(back.runs[0].run, contents.runs[0].run);
         assert_eq!(back.runs[0].cells, contents.runs[0].cells);
+    }
+
+    /// A folder of its own for a test, emptied.
+    fn test_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "primordialis_qol_store_test_{name}_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn saved_cells_are_read_back() {
+        let dir = test_dir("saved");
+        let path = dir.join("detected.bin");
+        let mut store = empty();
+        store.set(run(Slot::Normal, 7, 1), vec![CELL]);
+        store.set(run(Slot::Sandbox, 8, 2), Vec::new());
+        assert!(store.save_to(&path));
+        assert!(store.save_to(&path), "and again, over the last one");
+
+        let runs = read(&path);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].run, run(Slot::Normal, 7, 1));
+        assert_eq!(runs[0].cells, [CELL]);
+        assert_eq!(runs[1].run, run(Slot::Sandbox, 8, 2));
+        assert_eq!(
+            fs::read_dir(&dir).unwrap().count(),
+            1,
+            "nothing is left beside it"
+        );
+        assert_eq!(
+            store.cells(run(Slot::Normal, 7, 1)),
+            [CELL],
+            "saving keeps them"
+        );
+
+        assert!(!store.save_to(&dir.join("missing").join("detected.bin")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn files_that_cant_be_used_start_over() {
+        let dir = test_dir("unusable");
+        let path = dir.join("detected.bin");
+        assert!(read(&path).is_empty(), "no file yet");
+        assert!(read(&dir).is_empty(), "not a file");
+
+        fs::write(&path, b"\xFF\xFF\xFF").unwrap();
+        assert!(read(&path).is_empty(), "not the format");
+
+        let contents = Contents {
+            version: VERSION + 1,
+            runs: vec![RunCells {
+                run: run(Slot::Normal, 7, 1),
+                cells: vec![CELL],
+            }],
+        };
+        fs::write(&path, postcard::to_allocvec(&contents).unwrap()).unwrap();
+        assert!(read(&path).is_empty(), "another version");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

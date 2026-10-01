@@ -454,18 +454,54 @@ mod tests {
     }
 
     #[test]
+    fn the_most_cells_picked_up_at_once_are_forgotten() {
+        let pickups: Vec<Candidate> = (0..20).map(|i| pickup(i, 1, i as f32 * 100.0)).collect();
+        let cells: Vec<Cell> = pickups.iter().map(|p| cell(1, p.position.x)).collect();
+        let mut found = loaded(&cells, &pickups);
+        rematch(&mut found, 0x1000, &pickups[..20 - MAX_PICKED_AT_ONCE]);
+        assert_eq!(shown(&found, 20).len(), 20 - MAX_PICKED_AT_ONCE);
+        assert!(found.pending.is_empty(), "picked up, not cleared");
+        assert!(found.dirty);
+    }
+
+    #[test]
+    fn cells_match_pickups_across_square_borders() {
+        // Far from the origin, in the squares on either side of a border, on both axes.
+        let border = 7.0 * MATCH_DISTANCE;
+        let (inside, outside) = (border - 1.0, border + 1.0);
+        let at = |x: f32, y: f32| Candidate {
+            index: 0,
+            material: 1,
+            position: Real2::new(x, y),
+        };
+        let cell_at = |x: f32, y: f32| Cell {
+            material: 1,
+            position: [x, y],
+        };
+        for (cell, pickup) in [
+            (cell_at(inside, -inside), at(outside, -outside)),
+            (cell_at(outside, -outside), at(inside, -inside)),
+        ] {
+            let found = loaded(&[cell], &[pickup]);
+            assert_eq!(shown(&found, 1), [0], "{cell:?}");
+        }
+    }
+
+    #[test]
     fn found_pickups_are_followed_as_they_move() {
         let mut found = loaded(&[cell(1, 0.0)], &[pickup(0, 1, 0.0)]);
         let at = |material: u32, x: f32| move |index| (index == 0).then(|| pickup(0, material, x));
-        assert!(found.follow(at(1, RESAVE_DISTANCE / 2.0)));
+        assert!(found.follow(at(1, 1.0)));
+        assert!(found.follow(at(1, RESAVE_DISTANCE)));
         assert_eq!(found.tracked[0].cell.position, [0.0, 0.0]);
-        assert!(!found.dirty, "moving a little doesn't need saving");
+        assert!(!found.dirty, "drifting a little doesn't need saving");
         assert!(found.follow(at(1, 30.0)));
         assert_eq!(found.tracked[0].cell.position, [30.0, 0.0]);
         assert!(found.dirty);
 
+        assert!(found.follow(at(1, 30.0 + MAX_STEP)), "as far as it goes");
         assert!(
-            !found.follow(at(1, 30.0 + MAX_STEP + 1.0)),
+            !found.follow(at(1, 30.0 + 2.0 * MAX_STEP + 1.0)),
             "too far in a frame"
         );
         assert!(!found.follow(at(2, 30.0)), "another kind of cell");
@@ -487,6 +523,8 @@ mod tests {
         // A cell and a pickup within MATCH_DISTANCE are at most one square apart on each axis.
         let at = Real2::new(49.9, -0.1);
         let (x, y) = square_at(at);
+        assert_eq!((x, y), (0, -1));
+        assert_eq!(square_at(Real2::new(-120.0, 175.0)), (-3, 3));
         for (dx, dy) in [(1.0, 1.0), (-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0)] {
             let other = Real2::new(at.x + dx * 35.0, at.y + dy * 35.0);
             let (ox, oy) = square_at(other);

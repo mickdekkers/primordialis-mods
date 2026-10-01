@@ -96,4 +96,24 @@ mod tests {
         let heap = Box::new(0u8);
         assert_eq!(containing(&*heap as *const u8 as usize), None);
     }
+
+    /// Here, this crate is linked into the test executable.
+    #[test]
+    fn finds_its_own_module() {
+        let own = own().unwrap();
+        // SAFETY: Only looks the executable's module handle up.
+        assert_eq!(own, unsafe { GetModuleHandleW(ptr::null()) });
+        let range = own_range().unwrap();
+        assert_eq!(range.start, own as usize);
+        let function = finds_its_own_module as *const () as usize;
+        assert!(range.contains(&function), "{range:x?}");
+        assert_eq!(containing(range.end - 1), Some(own));
+        assert_eq!(path(own).unwrap(), std::env::current_exe().unwrap());
+    }
+
+    #[test]
+    fn tells_whether_a_module_is_loaded() {
+        assert!(is_loaded("kernel32.dll"));
+        assert!(!is_loaded("no_such_module_here.dll"));
+    }
 }

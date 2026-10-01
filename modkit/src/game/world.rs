@@ -342,6 +342,9 @@ mod tests {
         assert_eq!(settled, Real2::new(3.0, WALL_CLEARANCE * 2.0));
         let settled = push_out_of_walls(boulder, Real2::new(0.0, 4.0), 2.0);
         assert!((settled.y - 11.0).abs() < 1e-4 && settled.x == 0.0);
+        // Diagonally, straight away from the boulder's center.
+        let settled = push_out_of_walls(boulder, Real2::new(-3.0, 4.0), 2.0);
+        assert!((settled.x + 6.6).abs() < 1e-4 && (settled.y - 8.8).abs() < 1e-4);
     }
 
     #[test]
@@ -375,6 +378,11 @@ mod tests {
         assert!((red - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-6);
         let half_cycle = combo_color((period / 2.0).round() as i32)[0];
         assert!((half_cycle - (COMBO_BASE - COMBO_AMPLITUDE)).abs() < 1e-4);
+        // Green and blue peak a third and two thirds of a cycle after red.
+        let green = combo_color((period / 3.0).round() as i32)[1];
+        assert!((green - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-4);
+        let blue = combo_color((period * 2.0 / 3.0).round() as i32)[2];
+        assert!((blue - (COMBO_BASE + COMBO_AMPLITUDE)).abs() < 1e-4);
     }
 
     #[test]

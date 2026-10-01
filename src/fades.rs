@@ -181,6 +181,48 @@ mod tests {
     }
 
     #[test]
+    fn the_spotlight_eases_out_between_its_radius_and_edge() {
+        let id = PickupsId::for_tests(0x1000, 5);
+        let (radius, mouse) = (3.0, Real2::new(-40.0, 25.0));
+        let at = |distance: f32| Real2::new(mouse.x + distance, mouse.y);
+        let (inner, outer) = (SPOTLIGHT_RADIUS * radius, SPOTLIGHT_EDGE * radius);
+        let halfway = (inner + outer) / 2.0;
+        let icons = [
+            (0, mouse),
+            (1, at(inner - 0.1)),
+            (2, at(halfway)),
+            (3, at(outer + 0.1)),
+        ];
+        let mut fades = Fades::default();
+        fades.begin(id, 5);
+        fades.spotlight(icons.into_iter(), mouse, Some(0), radius);
+        assert_eq!(fades.targets[1].0, UNFOCUSED_ALPHA, "within the spotlight");
+        let eased = math::lerp(UNFOCUSED_ALPHA, 1.0, 0.5);
+        assert!((fades.targets[2].0 - eased).abs() < 1e-6, "halfway out");
+        assert_eq!(fades.targets[3], (1.0, FADE_TICKS_FAR), "past its edge");
+        let ticks = math::lerp(FADE_TICKS_NEAR, FADE_TICKS_FAR, halfway / outer);
+        assert!((fades.targets[2].1 - ticks).abs() < 1e-5);
+        assert_eq!(fades.targets[4], (1.0, FADE_TICKS_FAR), "not drawn");
+    }
+
+    #[test]
+    fn clearing_forgets_every_fade() {
+        let id = PickupsId::for_tests(0x1000, 1);
+        let mut fades = Fades::default();
+        for frame_number in [0, 60] {
+            fades.begin(id, 1);
+            fades.set_target(0, 0.5, 1.0);
+            fades.ease(frame_number);
+        }
+        fades.clear();
+        assert_eq!(fades.get(0), 1.0);
+        fades.begin(id, 1);
+        fades.set_target(0, 0.5, 1.0);
+        fades.ease(120);
+        assert_eq!(fades.get(0), 1.0, "the clock starts over too");
+    }
+
+    #[test]
     fn fades_start_over_for_another_pickup_array() {
         let (a, b) = (
             PickupsId::for_tests(0x1000, 2),

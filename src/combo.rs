@@ -83,11 +83,40 @@ mod tests {
             assert!((circle.r - HALO_DOT_RADIUS * 2.0).abs() < 1e-6);
             assert_eq!(circle.color[3], 0.5);
         }
+        let colors: Vec<[f32; 4]> = circles.iter().map(|circle| circle.color).collect();
+        for (i, color) in colors.iter().enumerate() {
+            let [r, g, b] = rainbow(i as f32 / HALO_DOTS as f32);
+            assert_eq!(*color, [r, g, b, 0.5], "each dot has its own hue");
+        }
         assert!((circles[0].x[0] - center.x - HALO_RADIUS * 2.0).abs() < 1e-4);
 
         circles.clear();
         Halo::new(10, 2.0).add(&mut circles, center, 0.5);
         assert!(circles[0].x[1] < center.y, "the first dot turned clockwise");
+    }
+
+    #[test]
+    fn the_rainbow_goes_around_the_hues_once() {
+        let (lightest, darkest) = (
+            RAINBOW_BASE + RAINBOW_AMPLITUDE,
+            RAINBOW_BASE - RAINBOW_AMPLITUDE,
+        );
+        // Red, green and blue each peak in turn, a third of the way apart.
+        for (channel, peak) in [0.0, 1.0 / 3.0, 2.0 / 3.0].into_iter().enumerate() {
+            assert!(
+                (rainbow(peak)[channel] - lightest).abs() < 1e-6,
+                "{channel}"
+            );
+            assert!(
+                (rainbow(peak + 0.5)[channel] - darkest).abs() < 1e-6,
+                "{channel}"
+            );
+        }
+        for step in 0..=20 {
+            for value in rainbow(step as f32 / 20.0) {
+                assert!((darkest - 1e-6..=lightest + 1e-6).contains(&value));
+            }
+        }
     }
 
     #[test]

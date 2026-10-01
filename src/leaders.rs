@@ -95,18 +95,25 @@ mod tests {
 
     #[test]
     fn dashed_lines_start_with_a_dash_and_stay_on_the_line() {
-        let (from, to, radius) = (Real2::new(1.0, 2.0), Real2::new(11.0, 2.0), 1.0);
+        let (from, to, radius) = (Real2::new(1.0, 2.0), Real2::new(11.0, 2.0), 2.0);
         let mut lines = Vec::new();
         dashed_line(&mut lines, from, to, radius, [1.0; 4]);
         let period = (DASH_LENGTH + DASH_GAP) * radius;
+        // The last dash is cut short at the end.
         assert_eq!(lines.len(), (10.0 / period).ceil() as usize);
         assert!(lines[0].start().same_bits(from));
+        let last = lines.len() - 1;
         for (k, line) in lines.iter().enumerate() {
             assert!((line.start().x - (from.x + k as f32 * period)).abs() < 1e-4);
             // Round caps stick out half the width at both ends, within the dash length.
             let drawn = line.end().x - line.start().x + line.width();
-            assert!(drawn <= DASH_LENGTH * radius + 1e-4, "{k}: {drawn}");
-            assert!(line.end().x <= to.x + 1e-4 && line.start().y == 2.0);
+            if k < last {
+                assert!((drawn - DASH_LENGTH * radius).abs() < 1e-4, "{k}: {drawn}");
+            } else {
+                assert!(drawn <= DASH_LENGTH * radius + 1e-4, "{k}: {drawn}");
+                assert!((line.end().x - to.x).abs() < 1e-4, "cut off at the end");
+            }
+            assert!(line.start().y == 2.0 && line.end().y == 2.0);
             assert!((line.width() - LEADER_WIDTH * radius).abs() < 1e-6);
         }
     }
@@ -144,6 +151,7 @@ mod tests {
         let at = Real2::new(3.0, 4.0);
         dashed_line(&mut lines, at, at, 1.0, [1.0; 4]);
         dashed_line(&mut lines, at, Real2::new(f32::NAN, 0.0), 1.0, [1.0; 4]);
+        dashed_line(&mut lines, at, Real2::new(10.0, 4.0), 0.0, [1.0; 4]);
         assert!(lines.is_empty());
     }
 }
