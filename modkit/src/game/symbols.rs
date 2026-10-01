@@ -489,3 +489,47 @@ impl Drop for Symbols {
         unsafe { SymCleanup(SESSION) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn layout() -> TypeLayout {
+        let field = |offset, size, bits| Field { offset, size, bits };
+        TypeLayout {
+            name: "thing".into(),
+            size: 16,
+            fields: HashMap::from([
+                ("count".to_owned(), field(4, 4, None)),
+                ("on".to_owned(), field(8, 4, Some((3, 1)))),
+                ("mode".to_owned(), field(8, 4, Some((4, 2)))),
+            ]),
+        }
+    }
+
+    #[test]
+    fn fields_are_found_with_the_size_they_are_used_as() {
+        let layout = layout();
+        assert_eq!(layout.offset("count"), Ok(4));
+        assert_eq!(layout.offset_sized("count", 4), Ok(4));
+        assert_eq!(layout.offset_of::<i32>("count"), Ok(4));
+        assert!(layout.offset_of::<u64>("count").is_err());
+        assert!(layout.offset_of::<u16>("count").is_err());
+        assert!(layout.offset("missing").is_err());
+        assert!(layout.offset("on").is_err(), "a bitfield");
+    }
+
+    #[test]
+    fn flags_are_one_bit_bitfields() {
+        let layout = layout();
+        assert_eq!(layout.flag("on"), Ok((8, 3)));
+        assert!(layout.flag("mode").is_err(), "two bits");
+        assert!(layout.flag("count").is_err(), "not a bitfield");
+        assert!(layout.flag("missing").is_err());
+    }
+
+    #[test]
+    fn names_are_passed_nul_terminated() {
+        assert_eq!(wide("ab"), [u16::from(b'a'), u16::from(b'b'), 0]);
+    }
+}

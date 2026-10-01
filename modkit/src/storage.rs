@@ -21,3 +21,15 @@ pub fn path(suffix: &str) -> Option<PathBuf> {
     name.push(suffix);
     Some(prefix.with_file_name(name))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_are_named_after_the_mod_next_to_it() {
+        let home = Path::new(r"C:\Games\Primordialis");
+        init(home, "my_mod");
+        assert_eq!(path("detected.bin"), Some(home.join("my_mod_detected.bin")));
+    }
+}

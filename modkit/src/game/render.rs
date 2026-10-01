@@ -273,6 +273,62 @@ mod tests {
     }
 
     #[test]
+    fn no_camera_scale_without_a_vertical_scale() {
+        let camera = |m5: f32, y: f32| {
+            let mut data = [0.0; 16];
+            data[0] = 0.02;
+            data[5] = m5;
+            data[15] = 1.0;
+            Camera {
+                matrix: Real4x4 { data },
+                position: [0.0, y, 0.0],
+            }
+        };
+        assert_eq!(camera(0.0, 5.0).world_units_per_half_screen(), None);
+        // A unit up from where it looks, the screen is infinitely far.
+        let overflowing = camera(f32::MAX / 5.5, 5.0);
+        assert_eq!(overflowing.world_units_per_half_screen(), None);
+    }
+
+    #[test]
+    fn points_behind_the_camera_are_not_unprojected() {
+        let data = [
+            1.2, 0.1, 0.0, -30.0, //
+            -0.05, 0.9, 0.3, 12.0, //
+            0.0, 0.0, 0.0, 0.0, //
+            0.0005, 0.002, 0.0, 1.5,
+        ];
+        let camera = Camera {
+            matrix: Real4x4 { data },
+            position: [0.0; 3],
+        };
+        // (0, -1000) is behind it (w = -0.5), yet the homography maps it to the screen here.
+        let behind = Real2::new(0.0, -1000.0);
+        assert_eq!(camera.project(behind), None);
+        let ndc = Real2::new(
+            (0.1 * behind.y - 30.0) / -0.5,
+            (0.9 * behind.y + 12.0) / -0.5,
+        );
+        assert_eq!(camera.unproject(ndc), None);
+    }
+
+    #[test]
+    fn draw_counts_are_positive_ints() {
+        assert_eq!(draw_count::<u8>(&[]), None);
+        assert_eq!(draw_count(&[0u8; 3]), Some(3));
+        let too_many = vec![(); i32::MAX as usize + 1];
+        assert_eq!(draw_count(&too_many), None);
+        assert_eq!(draw_count(&too_many[1..]), Some(i32::MAX));
+    }
+
+    #[test]
+    fn line_batches_fit_the_vertex_buffer() {
+        let bytes = |lines: usize| 0x30 + lines * size_of::<LineRenderInfo>();
+        assert!(bytes(MAX_LINES_PER_DRAW) <= 0x100_0000);
+        assert!(bytes(MAX_LINES_PER_DRAW + 1) > 0x100_0000);
+    }
+
+    #[test]
     fn stages_compare_by_name() {
         let name = std::ffi::CString::new("menus").unwrap();
         assert_eq!(Stage::new(&name), Stage::MENUS);

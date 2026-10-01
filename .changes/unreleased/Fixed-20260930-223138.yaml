@@ -1,0 +1,3 @@
+kind: Fixed
+body: Changes to primordialis_qol.toml saved while the game is starting up are no longer ignored until the file is changed again.
+time: 2026-09-30T22:31:38.0757283+02:00

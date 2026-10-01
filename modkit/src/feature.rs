@@ -123,6 +123,7 @@ mod tests {
             Box::new(Named("b")),
             Box::new(Named("c")),
         ]);
+        assert_eq!(features.names(), ["a", "b", "c"]);
         let (mut called, mut reverted) = (Vec::new(), Vec::new());
         for _ in 0..2 {
             features.each(

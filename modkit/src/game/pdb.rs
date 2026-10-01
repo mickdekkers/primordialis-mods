@@ -149,3 +149,50 @@ fn remove_stale_cache_entries(cache_dir: &Path, current_id: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ids_are_the_guid_and_age_in_hex() {
+        let codeview = CodeView {
+            guid: std::array::from_fn(|i| i as u8 * 0x11),
+            age: 0x1A,
+            pdb_name: "game.pdb".into(),
+        };
+        assert_eq!(codeview.id(), "00112233445566778899AABBCCDDEEFF1A");
+    }
+
+    #[test]
+    fn only_symbols_cached_for_other_game_versions_are_removed() {
+        let cache = std::env::temp_dir().join(format!("modkit_pdb_cache_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&cache);
+        let (current, old) = (
+            "0123456789ABCDEF0123456789ABCDEF1",
+            "FEDCBA9876543210FEDCBA98765432102",
+        );
+        let kept_dirs = [
+            current,
+            "0123456789ABCDEF0123456789ABCDEF",
+            "not a cache key, but quite long",
+        ];
+        for dir in kept_dirs.iter().chain([&old]) {
+            fs::create_dir_all(cache.join(dir)).unwrap();
+            fs::write(cache.join(dir).join("game.pdb"), b"pdb").unwrap();
+        }
+        let kept_file = "ABCDEF0123456789ABCDEF0123456789A";
+        fs::write(cache.join(kept_file), b"not a folder").unwrap();
+
+        remove_stale_cache_entries(&cache, current);
+        let mut left: Vec<String> = fs::read_dir(&cache)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        let mut expected: Vec<&str> = kept_dirs.iter().copied().chain([kept_file]).collect();
+        expected.sort();
+        assert_eq!(left, expected);
+        fs::remove_dir_all(&cache).unwrap();
+    }
+}

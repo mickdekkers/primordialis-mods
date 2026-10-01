@@ -184,17 +184,18 @@ mod tests {
         assert!(complete > 2000);
         let listed = &spiral.offsets[..complete];
         assert!(listed.windows(2).all(|w| w[0].1 <= w[1].1));
-        // Every spot within the last listed distance is listed.
+        // Every spot within the last listed distance is listed, including any in the rings past
+        // those the spiral holds.
         let reach = listed[complete - 1].1;
         let unit = Lattice {
             origin: Real2::default(),
             spacing: 1.0,
         };
-        let within = (0..=spiral.rings)
-            .flat_map(|ring| hex_ring(Hex { q: 0, r: 0 }, ring))
-            .filter(|&hex| unit.position(hex).distance(Real2::default()) < reach)
-            .count();
-        assert!(within <= complete);
+        for hex in (0..=spiral.rings + 2).flat_map(|ring| hex_ring(Hex { q: 0, r: 0 }, ring)) {
+            if unit.position(hex).distance(Real2::default()) < reach {
+                assert!(listed.iter().any(|&(offset, _)| offset == (hex.q, hex.r)));
+            }
+        }
     }
 
     #[test]
@@ -203,13 +204,39 @@ mod tests {
             origin: Real2::new(3.0, -2.0),
             spacing: 2.0,
         };
-        for q in -3..=3 {
-            for r in -3..=3 {
-                let hex = Hex { q, r };
-                let at = lattice.position(hex);
-                let nudged = Real2::new(at.x + 0.3, at.y - 0.4);
-                assert_eq!(lattice.round(nudged), hex);
+        let spots: Vec<Hex> = (0..=6)
+            .flat_map(|ring| hex_ring(Hex { q: 0, r: 0 }, ring))
+            .collect();
+        // Points all over the middle of the grid, including near the corners of cells.
+        for i in -40..=40 {
+            for j in -40..=40 {
+                let at = Real2::new(3.0 + i as f32 * 0.137, -2.0 + j as f32 * 0.119);
+                let distance = |hex: Hex| lattice.position(hex).distance(at);
+                let mut by_distance = spots.clone();
+                by_distance.sort_by(|&a, &b| distance(a).total_cmp(&distance(b)));
+                let [nearest, next, ..] = by_distance[..] else {
+                    unreachable!()
+                };
+                if distance(next) - distance(nearest) > 1e-3 {
+                    assert_eq!(lattice.round(at), nearest, "{at:?}");
+                }
             }
+        }
+    }
+
+    #[test]
+    fn bounds_cover_the_spots_between_the_outermost() {
+        let lattice = Lattice {
+            origin: Real2::new(0.0, 0.0),
+            spacing: SPACING,
+        };
+        // A lopsided pair of spots, two apart along r.
+        let mut bounds = Bounds::around(Hex { q: 0, r: 0 });
+        bounds.extend(Hex { q: 0, r: 2 });
+        assert!(bounds.contains(&lattice, lattice.position(Hex { q: 0, r: 1 }), 0.1));
+        for outside in [Hex { q: 1, r: 1 }, Hex { q: -1, r: 1 }, Hex { q: 0, r: 3 }] {
+            let at = lattice.position(outside);
+            assert!(!bounds.contains(&lattice, at, 0.1), "{outside:?}");
         }
     }
 

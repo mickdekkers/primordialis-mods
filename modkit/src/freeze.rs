@@ -17,8 +17,8 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetThreadId, OpenThread,
-    ResumeThread, SuspendThread, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION,
+    GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, GetProcessIdOfThread, GetThreadId,
+    OpenThread, ResumeThread, SuspendThread, THREAD_GET_CONTEXT, THREAD_QUERY_INFORMATION,
     THREAD_SUSPEND_RESUME,
 };
 
@@ -177,8 +177,16 @@ fn pause_with_toolhelp() -> Result<Option<Paused>> {
         unsafe {
             // A thread that can't be opened has exited since the snapshot.
             let thread = OpenThread(THREAD_ACCESS, 0, id);
+            if thread.is_null() {
+                continue;
+            }
+            // Or exited, and another process's thread got its ID: never pause that.
+            if GetProcessIdOfThread(thread) != GetCurrentProcessId() {
+                CloseHandle(thread);
+                continue;
+            }
             // One that can't be paused may still run: like `pause_by_iterating`, try again later.
-            if !thread.is_null() && !paused.add(thread) {
+            if !paused.add(thread) {
                 return Ok(None);
             }
         }
@@ -272,6 +280,8 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
+    use std::os::windows::io::AsRawHandle;
+
     use detour::RawDetour;
 
     #[inline(never)]
@@ -286,7 +296,8 @@ mod tests {
 
     /// Hooks and unhooks a function hundreds of times while other threads call it nonstop, patching
     /// only while they're paused outside its prologue. Any torn patch would crash or return garbage.
-    /// Pauses every other thread of the test process, so run it alone:
+    /// Half the rounds pause the threads with the Toolhelp fallback. Pauses every other thread of
+    /// the test process, so run it alone:
     /// `cargo test --release -- --ignored --test-threads=1 patches_code_other_threads_are_running`
     #[test]
     #[ignore = "pauses all other threads of the test process; run alone with --test-threads=1"]
@@ -320,10 +331,20 @@ mod tests {
         let start = target as *const () as usize;
         let prologue = start + 1..start + 16;
         let retries = AtomicUsize::new(0);
+        // Set if the workers made calls while they were paused.
+        let ran_while_paused = AtomicBool::new(false);
+        let calls = || original.load(Ordering::Relaxed) + replaced.load(Ordering::Relaxed);
         let mut longest = Duration::ZERO;
         for round in 0..200 {
+            USE_TOOLHELP.store(round >= 100, Ordering::Relaxed);
             let enable = round % 2 == 0;
             let toggled = while_paused(Duration::from_secs(5), |paused| {
+                let before = calls();
+                let spin = Instant::now();
+                while spin.elapsed() < Duration::from_micros(50) {}
+                if calls() != before {
+                    ran_while_paused.store(true, Ordering::Relaxed);
+                }
                 if paused.any_executing_in(std::slice::from_ref(&prologue)) {
                     retries.fetch_add(1, Ordering::Relaxed);
                     return None;
@@ -345,6 +366,7 @@ mod tests {
             longest = longest.max(stats.longest_pause);
             thread::sleep(Duration::from_micros(200));
         }
+        USE_TOOLHELP.store(false, Ordering::Relaxed);
         stop.store(true, Ordering::Relaxed);
         for worker in workers {
             worker.join().unwrap();
@@ -356,5 +378,67 @@ mod tests {
             retries.load(Ordering::Relaxed)
         );
         assert!(original.load(Ordering::Relaxed) > 0 && replaced.load(Ordering::Relaxed) > 0);
+        assert!(!ran_while_paused.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn toolhelp_lists_the_other_threads_of_this_process() {
+        let (ready, stop) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let worker = {
+            let (ready, stop) = (ready.clone(), stop.clone());
+            thread::spawn(move || {
+                ready.store(true, Ordering::Relaxed);
+                while !stop.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            })
+        };
+        while !ready.load(Ordering::Relaxed) {
+            thread::yield_now();
+        }
+        let ids = other_thread_ids().unwrap();
+        // SAFETY: The handle of a thread that hasn't been joined yet.
+        let worker_id = unsafe { GetThreadId(worker.as_raw_handle()) };
+        // SAFETY: Always valid.
+        let (process, current) = unsafe { (GetCurrentProcessId(), GetCurrentThreadId()) };
+        assert!(ids.contains(&worker_id));
+        assert!(!ids.contains(&current));
+        for id in ids {
+            // SAFETY: Opens a thread by ID, only to check its process, and closes it.
+            let owner = unsafe {
+                let thread = OpenThread(THREAD_QUERY_INFORMATION, 0, id);
+                // Exited since the snapshot.
+                if thread.is_null() {
+                    continue;
+                }
+                let owner = GetProcessIdOfThread(thread);
+                CloseHandle(thread);
+                owner
+            };
+            assert_eq!(owner, process, "{id}");
+        }
+        stop.store(true, Ordering::Relaxed);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn a_thread_whose_whereabouts_are_unknown_counts_as_everywhere() {
+        let paused = Paused {
+            threads: vec![(ptr::null_mut(), 0x1000), (ptr::null_mut(), 0x5000)],
+        };
+        assert!(paused.any_executing_in(std::slice::from_ref(&(0x800..0x1001))));
+        assert!(!paused.any_executing_in(&[0x1001..0x5000, 0x6000..0x7000]));
+        assert!(paused.any_executing_in(&[0x6000..0x7000, 0x4000..0x5008]));
+        // Nothing was opened or paused: nothing to resume.
+        std::mem::forget(paused);
+        let unknown = Paused {
+            threads: vec![(ptr::null_mut(), UNKNOWN)],
+        };
+        assert!(unknown.any_executing_in(std::slice::from_ref(&(0x6000..0x7000))));
+        assert!(unknown.any_executing_in(&[]));
+        std::mem::forget(unknown);
     }
 }

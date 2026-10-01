@@ -183,3 +183,37 @@ impl From<WallSample> for Wall {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_bits_compares_both_coordinates() {
+        let at = Real2::new(1.0, 2.0);
+        assert!(at.same_bits(at));
+        assert!(!at.same_bits(Real2::new(1.0, 2.5)));
+        assert!(!at.same_bits(Real2::new(1.5, 2.0)));
+        assert!(Real2::new(f32::NAN, 0.0).same_bits(Real2::new(f32::NAN, 0.0)));
+        assert!(!Real2::new(0.0, 0.0).same_bits(Real2::new(0.0, -0.0)));
+    }
+
+    #[test]
+    fn distances_and_lerps() {
+        let (a, b) = (Real2::new(1.0, 2.0), Real2::new(4.0, -2.0));
+        assert_eq!(a.distance(b), 5.0);
+        assert_eq!(a.distance_squared(b), 25.0);
+        assert_eq!(a.lerp(b, 0.25), Real2::new(1.75, 1.0));
+        assert!(a.is_finite() && !Real2::new(0.0, f32::INFINITY).is_finite());
+    }
+
+    #[test]
+    fn lines_keep_their_ends_and_width() {
+        let (from, to) = (Real2::new(3.0, -1.0), Real2::new(-2.0, 4.5));
+        let line = LineRenderInfo::new(from, to, 0.5, [1.0, 0.5, 0.25, 1.0]);
+        assert_eq!(line.start(), from);
+        assert_eq!(line.end(), to);
+        assert_eq!(line.width(), 0.5);
+        assert_eq!(line.color(), [1.0, 0.5, 0.25, 1.0]);
+    }
+}

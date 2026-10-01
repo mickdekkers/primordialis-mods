@@ -134,5 +134,22 @@ mod tests {
     fn bits_tell_zeros_apart() {
         assert!(0.0f32.same_bits(0.0) && !0.0f32.same_bits(-0.0));
         assert!(f32::NAN.same_bits(f32::NAN));
+        let at = Real2::new(1.0, f32::NAN);
+        assert!(Field::same_bits(at, at));
+        assert!(!Field::same_bits(at, Real2::new(1.0, 0.0)));
+        assert!(!Field::same_bits(
+            Real2::new(0.0, 2.0),
+            Real2::new(-0.0, 2.0)
+        ));
+    }
+
+    #[test]
+    fn remembers_that_it_warned() {
+        let mut edits = PickupEdits::<f32>::default();
+        assert!(!edits.warned);
+        edits.warn_once("the pickups changed");
+        assert!(edits.warned);
+        edits.warn_once("the pickups changed");
+        assert!(edits.warned);
     }
 }
