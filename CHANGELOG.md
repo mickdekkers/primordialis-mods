@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.1 (2026-10-01)
+
+### Fixed
+
+- Changes to primordialis_qol.toml saved while the game is starting up are no longer ignored until the file is changed again.
 ## 0.3.0 (2026-09-30)
 
 ### Added
