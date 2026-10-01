@@ -229,3 +229,24 @@ impl WorldTooltip<'_> {
         self.address(self.game.bindings.tooltip) + std::mem::offset_of!(TooltipState, alpha)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tooltip_is_visible_until_it_has_faded_out_or_is_hidden() {
+        let mut tooltip = PickupTooltip::default();
+        assert!(!tooltip.is_visible());
+        tooltip.state.alpha = 0.01;
+        tooltip.state.box_size = Real2::new(0.5, 0.2);
+        assert!(tooltip.is_visible());
+        tooltip.hide();
+        assert!(!tooltip.is_visible());
+        assert_eq!(
+            tooltip.state.box_size,
+            Real2::default(),
+            "it grows from nothing again"
+        );
+    }
+}
