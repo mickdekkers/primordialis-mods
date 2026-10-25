@@ -140,6 +140,10 @@ These keep hooking and unloading safe while the game runs:
   the version in `Cargo.toml` and `Cargo.lock`), builds and tests, scans the DLL on VirusTotal, then
   pushes the "Release v<version>" commit to `main` and creates the tag and release (a draft if any
   engine flagged it). Never bump the version or tag by hand. `DEVELOPMENT.md` has the details.
+- A draft is published by `.github/workflows/virustotal-recheck.yml`, which rescans its DLL daily and
+  publishes it once no engine flags it (the README's badge only ever shows a published release). A
+  new release folds the versions still in drafts into its own (`.github/scripts/batch-changes.ps1`),
+  so the changelog only lists published versions, each complete.
 - `main` has a ruleset: changes only through pull requests (squash-merged), signed commits, and the
   "Format, lint and test" check. `GITHUB_TOKEN` can't bypass it, so the release puts its commit on
   `main` with a token from a GitHub App that can (`actions/create-github-app-token`, with the App's

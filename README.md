@@ -94,7 +94,10 @@ information it reads from the game.
   mickdekkers/primordialis-mods` checks the file you downloaded against it.
 
 The mod works by hooking into the game's code while it runs, which some antivirus programs are wary of,
-so one may occasionally flag it. The VirusTotal report for each release shows which engines, if any, did.
+so one may occasionally flag a new version by mistake. A version is only released once none of the
+engines on VirusTotal flag it, which can take a few days while an engine fixes its mistake. The badge
+and the release notes show the result on the day it was released, and the report they link to has the
+latest results.
 
 ## Settings
 

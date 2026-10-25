@@ -1,0 +1,200 @@
+name: VirusTotal recheck
+
+# Publishes a release the Release workflow left as a draft, because VirusTotal flagged its DLL or the
+# scan didn't finish, once a rescan finds nothing. An antivirus engine that flagged the DLL by mistake
+# usually fixes its signatures within days, but VirusTotal's report keeps the old verdict until the file
+# is scanned again, so every day this asks for a rescan of the newest draft's DLL. If it's still flagged
+# two weeks after the release, one run fails, so that GitHub sends a notification; the daily rescans go
+# on after that. It also keeps the README's VirusTotal badge linked to the latest published release.
+# See "Releasing" in DEVELOPMENT.md.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never alongside a release, which may be folding the draft into a new version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  find:
+    name: Find a draft or a stale badge
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # to see draft releases, which only show to tokens that can write
+    outputs:
+      draft: ${{ steps.find.outputs.draft }}
+      badge: ${{ steps.find.outputs.badge }}
+      stale: ${{ steps.find.outputs.stale }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The draft is the newest one after the latest published release, of a version still in the
+      # changelog. Older drafts are ones a release replaced, and are never published.
+      - name: Find them
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName,isDraft)
+          latest=$(jq -r '.[] | select(.isDraft | not) | .tagName' <<<"$releases" | sort -V | tail -n1)
+          draft=
+          for tag in $(jq -r '.[] | select(.isDraft) | .tagName' <<<"$releases" | sort -V); do
+            newest=$(printf '%s\n' "$latest" "$tag" | sort -V | tail -n1)
+            if [[ -f .changes/$tag.md && $tag != "$latest" && $newest == "$tag" ]]; then
+              draft=$tag
+            fi
+          done
+          echo "Latest published release: ${latest:-none}. Draft to rescan: ${draft:-none}."
+          echo "draft=$draft" >> "$GITHUB_OUTPUT"
+
+          # The badge in the latest published release's notes, which the README should show too.
+          badge=
+          if [[ -n $latest ]]; then
+            badge=$(gh release view "$latest" --repo "$GITHUB_REPOSITORY" --json body --jq .body |
+              tr -d '\r' | grep -m1 '^\[!\[VirusTotal' || true)
+          fi
+          readme=$(grep -m1 '^\[!\[VirusTotal' README.md || true)
+          stale=false
+          if [[ -n $badge && $badge != "$readme" ]]; then
+            stale=true
+            echo "The README's VirusTotal badge isn't the one of $latest."
+          fi
+          echo "badge=$badge" >> "$GITHUB_OUTPUT"
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Rescan and publish
+    needs: find
+    if: needs.find.outputs.draft != '' || needs.find.outputs.stale == 'true'
+    runs-on: ubuntu-24.04
+    # The environment holding the VirusTotal key and the release App's key, so that no other job can
+    # use them.
+    environment: release
+    permissions:
+      contents: write # to edit the draft's notes and publish it, which creates its tag
+    env:
+      TAG: ${{ needs.find.outputs.draft }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The DLL that was attested and scanned when the draft was made: the rescan is of the same file.
+      - name: Download the draft's DLL
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern primordialis_qol.dll --dir dist
+
+      - name: Rescan on VirusTotal
+        id: scan
+        if: env.TAG != ''
+        env:
+          VT_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
+        run: bash .github/scripts/virustotal.sh --rescan dist/primordialis_qol.dll virustotal.md
+
+      # The notes get the rescan's result in place of the last one. A clean rescan publishes the draft.
+      - name: Update the notes, and publish if clean
+        id: release
+        if: env.TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLEAN: ${{ steps.scan.outputs.clean }}
+        run: |
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r' > notes.md
+          if [[ $(grep -c '^<!-- virustotal -->$' notes.md) != 1 || $(grep -c '^<!-- /virustotal -->$' notes.md) != 1 ]]; then
+            echo "::error::The notes of $TAG don't have one VirusTotal section to replace."
+            exit 1
+          fi
+          awk '
+            /^<!-- virustotal -->$/ { while ((getline line < "virustotal.md") > 0) print line; skip = 1; next }
+            /^<!-- \/virustotal -->$/ { skip = 0; next }
+            !skip { print }
+          ' notes.md > notes.new
+
+          if [[ $CLEAN == true ]]; then
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.new --draft=false --latest
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "Published $TAG."
+            exit 0
+          fi
+
+          # Two weeks after the release, the notes get a marker, and the last step fails this run, once.
+          created=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json createdAt --jq .createdAt)
+          days=$(( ($(date +%s) - $(date -d "$created" +%s)) / 86400 ))
+          echo "$TAG is still a draft, $days days after it was made."
+          if (( days >= 14 )) && ! grep -q '^<!-- virustotal-overdue -->$' notes.md; then
+            printf '\n<!-- virustotal-overdue -->\n' >> notes.new
+            echo "overdue=$days" >> "$GITHUB_OUTPUT"
+          fi
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.new
+
+      # The README on main shows the latest published release's badge: the one just published, or the
+      # one it should have shown already.
+      - name: Link the README to the latest release's report
+        id: readme
+        env:
+          PUBLISHED: ${{ steps.release.outputs.published }}
+          SCAN_BADGE: ${{ steps.scan.outputs.badge }}
+          FIND_BADGE: ${{ needs.find.outputs.badge }}
+        run: |
+          if [[ $PUBLISHED == true ]]; then badge=$SCAN_BADGE; release=$TAG; else badge=$FIND_BADGE; release=; fi
+          if [[ -z $badge ]]; then
+            echo "No badge to link the README to."
+            exit 0
+          fi
+          # main as it is now, since the checkout: the commit only fast-forwards.
+          git fetch --quiet --depth=1 origin main
+          git checkout --quiet --detach FETCH_HEAD
+          if [[ $(grep -c '^\[!\[VirusTotal' README.md) != 1 ]]; then
+            echo "::error::README.md needs exactly one line starting with the VirusTotal badge."
+            exit 1
+          fi
+          BADGE=$badge awk '/^\[!\[VirusTotal/ { $0 = ENVIRON["BADGE"] } { print }' README.md > README.new
+          mv README.new README.md
+          if git diff --quiet; then
+            echo "The README already shows this badge."
+            exit 0
+          fi
+          git diff
+          message="Link the README's VirusTotal badge to ${release:-the latest release}"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "$message" \
+            -m "The README shows the VirusTotal result of the latest published release, linking to its report." \
+            README.md
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # main's ruleset only takes changes through pull requests. As in the Release workflow, the commit
+      # is made by the release App, which the ruleset lets bypass it, and signed by GitHub.
+      - name: Get a token to push to main
+        id: app
+        if: steps.readme.outputs.commit != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Push the README commit
+        if: steps.readme.outputs.commit != ''
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          README_COMMIT: ${{ steps.readme.outputs.commit }}
+        run: bash .github/scripts/push-signed-commit.sh "$README_COMMIT" main
+
+      - name: Report a draft that's still flagged
+        if: steps.release.outputs.overdue != ''
+        env:
+          DAYS: ${{ steps.release.outputs.overdue }}
+        run: |
+          echo "::error::VirusTotal still flags the DLL of $TAG, $DAYS days after the release was made, so it's still a draft. The release notes link to the report. The daily rescans go on, and publish it once one is clean."
+          exit 1
