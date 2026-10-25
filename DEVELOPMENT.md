@@ -214,7 +214,11 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
 
 1. Batches the waiting changes into the new version with changie: its section in `CHANGELOG.md`, and its
    number in `Cargo.toml` and `Cargo.lock`. It commits that as "Release v<version>", without pushing it
-   yet. It fails if there's nothing to release.
+   yet. It fails if there's nothing to release. Versions batched after the latest published release,
+   whose releases are still drafts, are folded into the new one (`.github/scripts/batch-changes.ps1`):
+   the change files their release commits batched are put back and their sections removed, so the
+   changelog and the release notes cover every change since the release players have, and only list
+   versions that were published. Their numbers are skipped, not reused.
 2. Runs the tests, and builds `primordialis_qol.dll`, both with `--remap-path-prefix` (the same flags, so
    the build reuses the dependencies the tests compiled). The paths Rust embeds then point to `/cargo`,
    `/rustup` and `/build` instead of folders on the build machine. Nothing comes from a cache: every
@@ -222,10 +226,11 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    `.github/scripts/check-paths.ps1` checks that every path in the DLL has an expected form: no absolute
    paths at all, and every source path under one of those neutral roots (or the ones the Rust project's
    own builds use). Anything else fails the release. Run it on a local build to see what it catches.
-3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes, at most an hour). The
-   release commit then gets the result: the VirusTotal badge in the README links to this version's
-   report, so the README at each tag matches that release. The README isn't part of the build, so the DLL is still what that
-   commit builds. Step 1 checks the README has that badge, so a missing one fails before the upload.
+3. Uploads the DLL to VirusTotal and waits for the scan (usually a few minutes, at most an hour). If
+   no engine flagged it, the release commit then gets the result: the VirusTotal badge in the README
+   links to this version's report, so the README at each tag matches that release. The README isn't
+   part of the build, so the DLL is still what that commit builds. Step 1 checks the README has that
+   badge, so a missing one fails before the upload.
 4. Attests the DLL's build provenance with `actions/attest`: a record, signed with a Sigstore certificate
    issued to this workflow run, of the workflow, commit and run that built it, which GitHub keeps with
    the repository. It's made in the publishing job rather than the build, since the build runs the
@@ -247,9 +252,32 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    with its PDB for investigating crashes.
 
 If no engine flagged the DLL, the release is published. Otherwise, or if the scan didn't finish, it's
-left as a draft: look at the report, adjust the notes if needed, and publish it by hand, which also
-creates its tag. Heuristic engines sometimes flag DLLs that patch another program's code, which is
-exactly what a mod does.
+left as a draft, and the README keeps showing the last published release. Heuristic engines sometimes
+flag DLLs that patch another program's code, which is exactly what a mod does, and usually fix such
+mistakes in their signatures within days. VirusTotal's report keeps the old verdict until the file is
+scanned again, though, so the VirusTotal recheck workflow (`virustotal-recheck.yml`) runs every day:
+
+- It asks VirusTotal to rescan the newest draft's DLL (the same file, by its SHA-256), and puts the
+  result in the draft's notes, in place of the last one. The VirusTotal section of the notes is
+  marked with HTML comments for this.
+- If no engine flags it any more, it publishes the draft, which creates its tag, and links the README's
+  badge to the report. Like the release commit, that commit is made by the release App and signed by
+  GitHub.
+- If the DLL is still flagged two weeks after the release was made, one run fails, so GitHub sends a
+  notification. That's the time to look at the report: for a false positive, the engine's vendor
+  usually takes reports (Microsoft's is the [WDSI submission
+  portal](https://www.microsoft.com/en-us/wdsi/filesubmission), as a software developer). The daily
+  rescans go on after that, and still publish the draft once one is clean.
+- It also links the README's badge to the latest published release's report whenever they differ.
+
+Nothing needs to be done by hand otherwise. A new release replaces a draft rather than waiting for it:
+it folds the draft's changes into its own (step 1) and deletes the draft once its release commit is on
+`main`. The two workflows never run at the same time. Each release's VirusTotal result is the one from
+the day it was published; it isn't checked again after that.
+
+Run the recheck by hand with `gh workflow run virustotal-recheck.yml`, e.g. after the vendor has fixed
+a false positive. GitHub stops running scheduled workflows in a repository with no activity for 60
+days, but the release commit counts as activity, so a draft is rechecked for at least that long.
 
 Only the mod is released. The hot reload host and injector are development tools, and an injector is
 the kind of program antivirus rightly distrusts.

@@ -3,7 +3,8 @@ name: Release
 # Releases the changes recorded in .changes/unreleased: batches them into the next version (its
 # changelog section, release notes and version number), builds and tests it, scans the DLL on
 # VirusTotal, then pushes the release commit to main and publishes the release. Nothing is pushed or
-# published if a step fails. See "Releasing" in DEVELOPMENT.md.
+# published if a step fails. A release VirusTotal flags is left as a draft, which the VirusTotal
+# recheck workflow publishes once a rescan finds nothing. See "Releasing" in DEVELOPMENT.md.
 on:
   workflow_dispatch:
     inputs:
@@ -16,9 +17,10 @@ on:
 permissions:
   contents: read
 
-# One release at a time, and never cancel one halfway.
+# One release at a time, and never cancel one halfway. The VirusTotal recheck workflow shares the
+# group, so it never publishes a draft while a release is folding that draft into a new version.
 concurrency:
-  group: ${{ github.workflow }}
+  group: release
   cancel-in-progress: false
 
 env:
@@ -35,10 +37,13 @@ jobs:
     outputs:
       version: ${{ steps.prepare.outputs.version }}
       commit: ${{ steps.prepare.outputs.commit }}
+      folded: ${{ steps.prepare.outputs.folded }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The whole history, to find the release commits of versions that were never published.
+          fetch-depth: 0
 
       - name: Install Rust
         run: rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal
@@ -62,6 +67,7 @@ jobs:
         id: prepare
         env:
           REQUESTED: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $bump = if ($env:REQUESTED) { $env:REQUESTED } else { 'auto' }
           if ($bump -notmatch '^(auto|major|minor|patch|v?\d+\.\d+\.\d+)$') {
@@ -70,12 +76,13 @@ jobs:
           # changie names the version exactly as given, and every version so far is v-prefixed (its
           # notes file, `changie latest`, the commit message), so a version typed without one gets it.
           if ($bump -match '^\d') { $bump = "v$bump" }
-          # Fails if there are no changes to release.
-          changie batch $bump --allow-no-changes=false
-          if ($LASTEXITCODE) { throw 'changie batch failed' }
-          changie merge
-          if ($LASTEXITCODE) { throw 'changie merge failed' }
-          $tag = changie latest
+          # Versions batched since the last published release, whose releases are still drafts, are
+          # folded into this one. Fails if there are no changes to release.
+          $published = gh release list --repo $env:GITHUB_REPOSITORY --exclude-drafts --limit 1000 --json tagName |
+            ConvertFrom-Json | ForEach-Object tagName
+          if ($LASTEXITCODE) { throw 'cannot list the published releases' }
+          $batch = .github/scripts/batch-changes.ps1 -Bump $bump -Published $published
+          $tag = $batch.Tag
           $version = $tag.TrimStart('v')
 
           # The publishing job links the README's VirusTotal badge to this version's report. Check the
@@ -99,7 +106,12 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add CHANGELOG.md .changes Cargo.toml Cargo.lock
-          git commit --quiet -m "Release $tag" -m "Batches the changes in .changes/unreleased into CHANGELOG.md, sets the version to $version, and links the README's VirusTotal badge to this version's report."
+          $message = "Batches the changes in .changes/unreleased into CHANGELOG.md, and sets the version to $version."
+          if ($batch.Folded) {
+            $message += " Folds in the changes of $($batch.Folded -join ', '), which were never published."
+          }
+          $message += " If VirusTotal finds nothing, also links the README's VirusTotal badge to this version's report."
+          git commit --quiet -m "Release $tag" -m $message
           if ($LASTEXITCODE) { throw 'git commit failed' }
           # The publishing job pushes this commit, if everything else succeeds.
           git bundle create dist/release.bundle "$env:GITHUB_SHA..HEAD"
@@ -108,6 +120,7 @@ jobs:
 
           "version=$version" >> $env:GITHUB_OUTPUT
           "commit=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+          "folded=$($batch.Folded -join ' ')" >> $env:GITHUB_OUTPUT
 
       # Rust embeds source paths in the DLL, for panic messages. Those include where Cargo and rustup
       # keep their files, in the home folder of whoever built it: map them to neutral names. The tests
@@ -194,11 +207,13 @@ jobs:
 
       # The DLL's report only exists now, so the release commit gets it here: its README links to the
       # report for the DLL released with it. The README isn't part of the build, so the DLL is still
-      # what that commit builds.
+      # what that commit builds. A release left as a draft leaves the README alone, so it keeps showing
+      # the release players can download; the recheck workflow links it once it publishes the draft.
       - name: Link the README to the report
         id: readme
         env:
           BADGE: ${{ steps.scan.outputs.badge }}
+          CLEAN: ${{ steps.scan.outputs.clean }}
         run: |
           git fetch --quiet dist/release.bundle HEAD
           if [[ $(git rev-parse FETCH_HEAD) != "$COMMIT" ]]; then
@@ -210,6 +225,10 @@ jobs:
             exit 1
           fi
           git checkout --quiet --detach "$COMMIT"
+          if [[ $CLEAN != true ]]; then
+            echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # Anything but the badge line changing fails the release.
           awk '/^\[!\[VirusTotal/ { $0 = ENVIRON["BADGE"] } { print }' README.md > README.new
           mv README.new README.md
@@ -240,6 +259,27 @@ jobs:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           RELEASE_COMMIT: ${{ steps.readme.outputs.commit }}
         run: bash .github/scripts/push-signed-commit.sh "$RELEASE_COMMIT" main
+
+      # The versions folded into this one are gone from the changelog, so their drafts go too. Only
+      # drafts: a published release is never deleted.
+      - name: Delete the drafts this release replaces
+        if: needs.build.outputs.folded != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FOLDED: ${{ needs.build.outputs.folded }}
+        run: |
+          for tag in $FOLDED; do
+            if ! draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft); then
+              echo "$tag has no release to delete."
+              continue
+            fi
+            if [[ $draft != true ]]; then
+              echo "::error::$tag was folded into v$VERSION, but its release is published."
+              exit 1
+            fi
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
+            echo "Deleted the draft of $tag, which v$VERSION replaces."
+          done
 
       - name: Create the release
         env:
