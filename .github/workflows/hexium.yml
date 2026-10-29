@@ -2,11 +2,10 @@ name: Hexium
 
 # Publishes the latest published release on Hexium (primordialis.hexium.gg), the mod site the Gale mod
 # manager installs Primordialis mods from, if Hexium doesn't have that version yet. The Release
-# workflow runs it after each release, and it runs daily too, after the VirusTotal recheck, which
-# publishes releases that were left as drafts. Hexium gets the DLL that was released on GitHub, after
-# checking its build attestation. See "Hexium" in DEVELOPMENT.md.
+# workflow starts it after each release, and it runs daily too, after the VirusTotal recheck, which
+# publishes releases that were left as drafts. It uploads the package the Release workflow made and
+# released with the DLL, after checking its build attestation. See "Hexium" in DEVELOPMENT.md.
 on:
-  workflow_call:
   workflow_dispatch:
   schedule:
     - cron: "47 6 * * *"
@@ -24,9 +23,9 @@ env:
   # The team on Hexium that owns the package, and the package's name (as in hexium/manifest.json).
   HEXIUM_TEAM: mickdekkers
   HEXIUM_PACKAGE: MapCellTracker
-  # Versions before this one kept their files next to the DLL, which mod managers delete with every
-  # update, so they're never uploaded.
-  FIRST_VERSION: 0.4.0
+  # The first version released with a package for Hexium. Before 0.4.0, the mod kept its files next to
+  # the DLL, which mod managers delete with every update; 0.4.0 was uploaded by hand.
+  FIRST_VERSION: 0.4.1
 
 jobs:
   find:
@@ -69,27 +68,24 @@ jobs:
     environment: hexium
     permissions:
       contents: read
-      attestations: read # to check the DLL's build attestation
+      attestations: read # to check the package's build attestation
     env:
       TAG: ${{ needs.find.outputs.tag }}
     steps:
-      # What goes in the package with the DLL (the README, changelog and icon) is from the release.
+      # Only for the scripts: what's uploaded is the release's package.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          ref: ${{ needs.find.outputs.tag }}
 
-      # The DLL players download from GitHub, which the Release workflow built and attested.
-      - name: Download the release's DLL
+      # The package the Release workflow made and attested along with the DLL it holds.
+      - name: Download the release's package
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern primordialis_qol.dll --dir dist
-          gh attestation verify dist/primordialis_qol.dll --repo "$GITHUB_REPOSITORY" \
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern "primordialis_qol-${TAG#v}-hexium.zip"
+          gh attestation verify "dist/primordialis_qol-${TAG#v}-hexium.zip" --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
-
-      - name: Package
-        run: bash .github/scripts/hexium-package.sh "${TAG#v}" dist/primordialis_qol.dll "dist/$HEXIUM_PACKAGE-${TAG#v}.zip"
 
       - name: Upload
         env:
@@ -102,4 +98,4 @@ jobs:
             1) ;;
             *) exit 1 ;;
           esac
-          bash .github/scripts/hexium-upload.sh "$HEXIUM_TEAM" "dist/$HEXIUM_PACKAGE-${TAG#v}.zip"
+          bash .github/scripts/hexium-upload.sh "$HEXIUM_TEAM" "dist/primordialis_qol-${TAG#v}-hexium.zip"

@@ -170,7 +170,7 @@ jobs:
     permissions:
       contents: write # to create the tag and the release
       # Attesting the DLL happens in this job, not the build, which runs the dependencies' build scripts.
-      id-token: write # to get the Sigstore certificate that signs the DLL's attestation
+      id-token: write # to get the Sigstore certificate that signs the release files' attestation
       attestations: write # to store the attestation with the repository
     env:
       VERSION: ${{ needs.build.outputs.version }}
@@ -242,14 +242,26 @@ jobs:
             commit --quiet --amend --no-edit README.md
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      # A signed record that this workflow built the DLL from this repository, which anyone can check a
-      # download against with `gh attestation verify`. Made before main moves, so if it fails, nothing
-      # is released.
-      - name: Attest the DLL's build provenance
+      # The package mod managers install from Hexium: the DLL and its PDB, with the manifest, icon,
+      # README and changelog of the release commit. Released and attested with the DLL, so the Hexium
+      # workflow uploads exactly this file.
+      - name: Make the Hexium package
+        run: |
+          unzip -q "dist/primordialis_qol-$VERSION-debug-symbols.zip" primordialis_qol.pdb -d "$RUNNER_TEMP"
+          bash .github/scripts/hexium-package.sh "$VERSION" dist/primordialis_qol.dll \
+            "$RUNNER_TEMP/primordialis_qol.pdb" "dist/primordialis_qol-$VERSION-hexium.zip"
+
+      # A signed record that this workflow built the release's files from this repository, which anyone
+      # can check a download against with `gh attestation verify`. Made before main moves, so if it
+      # fails, nothing is released.
+      - name: Attest the build provenance
         id: attest
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: dist/primordialis_qol.dll
+          subject-path: |
+            dist/primordialis_qol.dll
+            dist/primordialis_qol-*-debug-symbols.zip
+            dist/primordialis_qol-*-hexium.zip
 
       # GitHub makes the commit from the same changes, so that it's signed. Only a fast-forward: if main
       # moved since the build started, this fails and nothing is released.
@@ -296,7 +308,8 @@ jobs:
             echo "### Install"
             echo
             echo "Download \`primordialis_qol.dll\` below and follow the [install steps]($install)."
-            echo "The debug symbols are only for investigating crashes."
+            echo "The debug symbols are only for investigating crashes, and the \`-hexium.zip\` is the package"
+            echo "mod managers install from [Hexium](https://primordialis.hexium.gg/mods/mickdekkers/MapCellTracker)."
             echo
             printf '%s\n\n' "$(cat virustotal.md)"
             echo "SHA-256 of \`primordialis_qol.dll\`: \`$sha256\`"
@@ -313,14 +326,21 @@ jobs:
           fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" \
             --title "Map Cell Tracker $VERSION" --notes-file notes.md "${draft[@]}" \
-            dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"
+            dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip" \
+            "dist/primordialis_qol-$VERSION-hexium.zip"
 
   # Publishes the release on Hexium too, unless it's a draft: then the Hexium workflow's daily run
-  # does, once the VirusTotal recheck publishes it.
+  # does, once the VirusTotal recheck publishes it. The Hexium workflow runs on its own rather than
+  # being called from here: a called workflow's job didn't get its environment's secrets.
+  # Unlike other events, a workflow_dispatch made with GITHUB_TOKEN does start a run.
   hexium:
-    name: Publish on Hexium
+    name: Start the Hexium upload
     needs: publish
+    runs-on: ubuntu-24.04
     permissions:
-      contents: read
-      attestations: read # to check the DLL's build attestation
-    uses: $/.github/workflows/hexium.yml
+      actions: write # to start the Hexium workflow
+    steps:
+      - name: Start it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run hexium.yml --repo "$GITHUB_REPOSITORY" --ref main

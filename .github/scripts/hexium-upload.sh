@@ -11,7 +11,8 @@ set -euo pipefail
 
 team=$1
 zip=$2
-api=https://hexium.gg/api/experimental
+# The community's own host: submitting through hexium.gg doesn't find the dependencies on it.
+api=https://primordialis.hexium.gg/api/experimental
 community=primordialis
 
 if [[ -z ${HEXIUM_API_TOKEN:-} ]]; then

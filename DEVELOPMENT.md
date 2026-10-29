@@ -245,10 +245,12 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    links to this version's report, so the README at each tag matches that release. The README isn't
    part of the build, so the DLL is still what that commit builds. Step 1 checks the README has that
    badge, so a missing one fails before the upload.
-4. Attests the DLL's build provenance with `actions/attest`: a record, signed with a Sigstore certificate
-   issued to this workflow run, of the workflow, commit and run that built it, which GitHub keeps with
-   the repository. It's made in the publishing job rather than the build, since the build runs the
-   dependencies' build scripts and shouldn't be able to sign anything. Anyone can check a download
+4. Makes the package for Hexium (see [Hexium](#hexium)) from the release commit, then attests the build
+   provenance of the release's files (the DLL, its PDB zip and that package) with `actions/attest`: a
+   record, signed with a Sigstore certificate issued to this workflow run, of the workflow, commit and
+   run that built them, which GitHub keeps with the repository. It's made in the publishing job rather
+   than the build, since the build runs the dependencies' build scripts and shouldn't be able to sign
+   anything. Anyone can check a download
    against it with `gh attestation verify primordialis_qol.dll --repo mickdekkers/primordialis-mods`;
    adding `--signer-workflow mickdekkers/primordialis-mods/.github/workflows/release.yml` also requires
    it to come from the Release workflow.
@@ -262,8 +264,8 @@ Changed or Removed, a patch version if there are only fixes. To choose it yourse
    API only moves `main` if it's still where the release started, and the script then checks the new
    commit has the same tree as the one that was built, and a valid signature.
 6. Creates the tag and the GitHub release: the version's changelog section, a VirusTotal badge linking to
-   the full report, the DLL's SHA-256, a link to its attestation and how to verify it, the DLL, and a zip
-   with its PDB for investigating crashes.
+   the full report, the DLL's SHA-256, a link to its attestation and how to verify it, the DLL, a zip
+   with its PDB for investigating crashes, and the package for Hexium.
 
 If no engine flagged the DLL, the release is published. Otherwise, or if the scan didn't finish, it's
 left as a draft, and the README keeps showing the last published release. Heuristic engines sometimes
@@ -299,24 +301,33 @@ Each published release also goes to [Hexium](https://primordialis.hexium.gg), th
 [Gale](https://github.com/Kesomannen/gale) mod manager installs Primordialis mods from, as the package
 `mickdekkers-MapCellTracker`. Gale installs it in its profile's `mods\mickdekkers-MapCellTracker\`
 folder, together with the Nucleus mod loader (the package's dependency), and starts the game with
-Nucleus. The Hexium workflow (`hexium.yml`) does the upload. The Release workflow runs it at its end,
-and it runs every day after the VirusTotal recheck too, which may have published a draft. Each time,
-it takes the latest published release and, if Hexium doesn't have that version yet:
+Nucleus.
 
-1. Downloads the release's DLL from GitHub, and checks with `gh attestation verify` that the Release
-   workflow built it: Hexium gets exactly the file players download from GitHub.
-2. Makes the package (`.github/scripts/hexium-package.sh`), the Thunderstore package format: a zip with
-   `manifest.json` (`hexium/manifest.json` with the version added), the 256×256 `assets/icon.png`, the
-   changelog, the DLL, and a README. The README is this repository's down to its install steps, with
-   its images linked on GitHub at the release's tag, followed by `hexium/mod-manager.md` for players
-   with a mod manager.
-3. Uploads it with the team's API token (`.github/scripts/hexium-upload.sh`), the same way Gale uploads
-   modpacks: Hexium's Thunderstore-compatible upload API, into the "Client-only" and "Open Source"
-   categories. Hexium scans each version on VirusTotal before it shows.
+The Release workflow makes the package (`.github/scripts/hexium-package.sh`) and releases it with the
+DLL, as `primordialis_qol-<version>-hexium.zip`, attested like the DLL. It's the Thunderstore package
+format: a zip with `manifest.json` (`hexium/manifest.json` with the version added), the 256×256
+`assets/icon.png`, the changelog, the DLL and its PDB, and a README. Hexium holds native DLLs that come
+without a PDB for moderator review. The README is this repository's down to its install steps, with
+its images linked on GitHub at the release's tag, followed by `hexium/mod-manager.md` for players with
+a mod manager.
+
+The Hexium workflow (`hexium.yml`) does the upload. The Release workflow starts it at its end (as a run
+of its own: called from the Release workflow, its job didn't get the `hexium` environment's API token),
+and it runs every day after the VirusTotal recheck too, which may have published a draft. Each time, it
+takes the latest published release and, if Hexium doesn't have that version yet:
+
+1. Downloads the release's package from GitHub, and checks with `gh attestation verify` that the
+   Release workflow made it: Hexium gets exactly the file released on GitHub.
+2. Uploads it with the team's API token (`.github/scripts/hexium-upload.sh`), the same way Gale uploads
+   modpacks: Hexium's Thunderstore-compatible upload API, asking for the "Client-only" and "Open Source"
+   categories. It goes through the community's own host, `primordialis.hexium.gg`: submitted through
+   `hexium.gg`, Hexium doesn't find the Nucleus dependency. Hexium scans each version on VirusTotal
+   before it shows.
 
 A version can only be uploaded once, so a failed upload is retried by the next daily run, or by running
 `gh workflow run hexium.yml`. Versions before 0.4.0 are never uploaded: they kept their settings and
-found cells next to the DLL, and mod managers delete a mod's folder with every update.
+found cells next to the DLL, and mod managers delete a mod's folder with every update. 0.4.0 was
+uploaded by hand, before releases came with the package.
 
 Only the mod is released. The hot reload host and injector are development tools, and an injector is
 the kind of program antivirus rightly distrusts.
