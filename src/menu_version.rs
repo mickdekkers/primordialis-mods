@@ -1,6 +1,6 @@
 //! Shows the mod's version in the main and pause menus, where the game shows its own: the game's
 //! version moves up a line to make room, so the corner reads "Primordialis v0.2 beta" over
-//! "QoL mod v0.1.0", both starting at the same place.
+//! "Map Cell Tracker v0.1.0", both starting at the same place.
 
 use std::ffi::CStr;
 
@@ -8,7 +8,7 @@ use modkit::Feature;
 use modkit::game::{MenuButton, Real2};
 
 const LABEL: &CStr = match CStr::from_bytes_with_nul(
-    concat!("QoL mod v", env!("CARGO_PKG_VERSION"), "\0").as_bytes(),
+    concat!("Map Cell Tracker v", env!("CARGO_PKG_VERSION"), "\0").as_bytes(),
 ) {
     Ok(label) => label,
     Err(_) => panic!("the version contains a NUL"),

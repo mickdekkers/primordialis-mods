@@ -1,9 +1,15 @@
-# Primordialis QoL mod
+# Map Cell Tracker
 
 A Rust mod for the game Primordialis (Windows, x64). It shows cell pickup icons on the map, and moves
 the Echolocation mutation's markers out of rock. Players install it with the game's own
 `--customdll "primordialis_qol.dll"` launch option, or as a mod of the Nucleus mod loader (which calls
 its `Initialise` export); no game files are modified.
+
+The mod is called **Map Cell Tracker** wherever players read its name: the README, the menus, release
+titles, the DLL's version resource. Its file and crate names stay `primordialis_qol` (the DLL, its
+settings, log, found cells and cache, the crates): players type the DLL's name in the launch option,
+and renaming the files would lose their settings and found cells. The repository is still called
+`primordialis-mods`. The icon's source is `assets/icon.svg`, rendered to `assets/icon.png`.
 
 ## Architecture
 

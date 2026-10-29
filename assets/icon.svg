@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Map Cell Tracker</title>
+  <defs>
+    <radialGradient id="cell" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#d9fbe9"/>
+      <stop offset="0.55" stop-color="#5cc995"/>
+      <stop offset="1" stop-color="#23704e"/>
+    </radialGradient>
+    <linearGradient id="pin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#c9ccd1"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" fill="#0b0b0b"/>
+  <g fill="#050505" stroke="#4a4a4a" stroke-width="3">
+    <path d="M18 40 C 30 18, 62 22, 64 44 C 66 62, 44 74, 30 66 C 16 58, 10 52, 18 40 Z"/>
+    <path d="M200 26 C 222 16, 246 32, 240 54 C 234 72, 212 70, 204 58 C 196 46, 186 34, 200 26 Z"/>
+    <path d="M22 176 C 40 164, 64 178, 60 200 C 56 220, 30 226, 20 210 C 10 196, 8 186, 22 176 Z"/>
+    <path d="M196 168 C 216 156, 244 168, 240 192 C 236 214, 212 218, 202 204 C 192 190, 180 178, 196 168 Z"/>
+    <path d="M8 110 C 18 100, 34 108, 30 122 C 26 134, 10 134, 6 124 C 4 118, 4 114, 8 110 Z"/>
+    <path d="M232 104 C 242 98, 254 106, 250 118 C 246 128, 234 128, 230 120 C 228 114, 228 108, 232 104 Z"/>
+  </g>
+  <ellipse cx="128" cy="234" rx="30" ry="7" fill="#000000" opacity="0.55"/>
+  <path d="M128 232 C 112 198, 52 162, 52 104 A 76 76 0 1 1 204 104 C 204 162, 144 198, 128 232 Z" fill="url(#pin)"/>
+  <circle cx="128" cy="104" r="56" fill="url(#cell)"/>
+  <circle cx="128" cy="104" r="56" fill="none" stroke="#1d5a40" stroke-width="3"/>
+  <ellipse cx="108" cy="80" rx="18" ry="10" fill="#ffffff" opacity="0.45" transform="rotate(-35 108 80)"/>
+</svg>
