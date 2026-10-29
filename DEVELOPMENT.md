@@ -1,6 +1,6 @@
 # Development
 
-How Primordialis QoL works, and how to build, test and release it. For what the mod does and how to
+How Map Cell Tracker works, and how to build, test and release it. For what the mod does and how to
 install it, see the [README](README.md).
 
 ## How it works
@@ -78,6 +78,17 @@ themselves.
 | `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing, menus and tooltips), resolved from the game's symbols, and the values copied from the game's code. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings, logging, and the files kept next to the DLL. |
 | `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
 | `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only, never released). |
+
+The mod's icon, for mod sites, is drawn in `assets/icon.svg`. `assets/icon.png` is rendered from it at
+256×256 with a browser, for example headless Edge, given full paths (it reads a relative one as a web
+address) and a throwaway profile:
+
+```powershell
+$repo = (Get-Location).Path -replace '\\', '/'
+& "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe" --headless --hide-scrollbars `
+  --force-device-scale-factor=1 --window-size=256,256 --user-data-dir="$env:TEMP\icon-render" `
+  --screenshot="$repo/assets/icon.png" "file:///$repo/assets/icon.svg"
+```
 
 ### Adding a feature
 

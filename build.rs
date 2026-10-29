@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Shown as the product name. The same as the mod's title in `src/lib.rs`.
-const PRODUCT_NAME: &str = "Primordialis QoL";
+const PRODUCT_NAME: &str = "Map Cell Tracker";
 
 fn main() {
     println!("cargo::rerun-if-changed=build.rs");

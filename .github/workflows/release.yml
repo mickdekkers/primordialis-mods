@@ -312,5 +312,5 @@ jobs:
             echo "::warning::Left the release as a draft: check the VirusTotal report, then publish it by hand."
           fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" \
-            --title "Primordialis QoL $VERSION" --notes-file notes.md "${draft[@]}" \
+            --title "Map Cell Tracker $VERSION" --notes-file notes.md "${draft[@]}" \
             dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"

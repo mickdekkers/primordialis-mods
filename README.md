@@ -1,4 +1,4 @@
-# Primordialis QoL
+# Map Cell Tracker
 
 [![Game: Primordialis v0.2 beta](https://img.shields.io/badge/game-Primordialis_v0.2_beta-blue)](#compatibility)
 [![Latest release](https://img.shields.io/github/v/release/mickdekkers/primordialis-mods?label=mod)](../../releases/latest)
@@ -57,7 +57,7 @@ it feels like part of the game.
 4. Start the game. The main menu shows the mod's version under the game's, in the bottom-left
    corner, so you can tell it's loaded. Explore a bit, and open the map.
 
-<img src="docs/screenshots/mod-version-display.png" alt="The mod's version is displayed below the game version in the pause menu" width="600">
+<img src="docs/screenshots/mod-version-display.png" alt="The mod's version is displayed below the game version in the pause menu">
 
 To update, close the game and replace `primordialis_qol.dll` with the new one.
 
@@ -118,7 +118,7 @@ Everything is on by default.
 move around a little first.
 
 If there are still none, look at the bottom-left corner of the main menu: with the mod loaded, it shows
-"QoL mod" and its version under the game's version. If it doesn't, look for `primordialis_qol.log`
+"Map Cell Tracker" and its version under the game's version. If it doesn't, look for `primordialis_qol.log`
 next to `primordialis_qol.dll`:
 
 - **There's no log:** the game didn't load the mod. Check that `primordialis_qol.dll` is right next to
