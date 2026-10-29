@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0 (2026-10-29)
+
+### Changed
+
+- The mod is now called Map Cell Tracker, also in the menus. Nothing changes when you update: the DLL keeps its name, and your settings and found cells carry over.
+- The mod now keeps its settings and found cells in the game folder however it's loaded, also with Nucleus or a mod manager, so they stay when you update the mod or load it another way. With Nucleus, the first time it starts, it moves them there from next to primordialis_qol.dll.
 ## 0.3.1 (2026-10-26)
 
 ### Added
