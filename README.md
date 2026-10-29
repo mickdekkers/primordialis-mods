@@ -45,6 +45,12 @@ it feels like part of the game.
 
 ## Install
 
+**With a mod manager:** the mod is on [Hexium](https://primordialis.hexium.gg/mods/mickdekkers/MapCellTracker).
+Install it with a mod manager for Hexium, such as [Gale](https://github.com/Kesomannen/gale), which also
+installs the Nucleus mod loader it needs, and start the game from there. Then skip to step 4.
+
+**By hand:**
+
 1. Download `primordialis_qol.dll` from the [latest release](../../releases/latest).
 2. Put it in the game folder, next to `primordialis.exe`. To open the game folder: in Steam, right-click
    Primordialis, then **Manage** → **Browse local files**.

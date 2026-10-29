@@ -1,0 +1,6 @@
+{
+  "name": "MapCellTracker",
+  "description": "Shows the cells you've seen on the map, with the game's own icons and tooltips. Spreads out piles under the mouse, and moves Echolocation's markers out of rock.",
+  "website_url": "https://github.com/mickdekkers/primordialis-mods",
+  "dependencies": ["u0068-Nucleus-1.0.5"]
+}

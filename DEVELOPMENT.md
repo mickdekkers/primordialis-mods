@@ -79,7 +79,8 @@ themselves.
 | `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
 | `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only, never released). |
 
-The mod's icon, for mod sites, is drawn in `assets/icon.svg`. `assets/icon.png` is rendered from it at
+What the mod's package on Hexium holds besides the DLL is in `hexium/` (see [Hexium](#hexium)). The
+mod's icon, for mod sites, is drawn in `assets/icon.svg`. `assets/icon.png` is rendered from it at
 256×256 with a browser, for example headless Edge, given full paths (it reads a relative one as a web
 address) and a throwaway profile:
 
@@ -291,6 +292,31 @@ the day it was published; it isn't checked again after that.
 Run the recheck by hand with `gh workflow run virustotal-recheck.yml`, e.g. after the vendor has fixed
 a false positive. GitHub stops running scheduled workflows in a repository with no activity for 60
 days, but the release commit counts as activity, so a draft is rechecked for at least that long.
+
+### Hexium
+
+Each published release also goes to [Hexium](https://primordialis.hexium.gg), the mod site the
+[Gale](https://github.com/Kesomannen/gale) mod manager installs Primordialis mods from, as the package
+`mickdekkers-MapCellTracker`. Gale installs it in its profile's `mods\mickdekkers-MapCellTracker\`
+folder, together with the Nucleus mod loader (the package's dependency), and starts the game with
+Nucleus. The Hexium workflow (`hexium.yml`) does the upload. The Release workflow runs it at its end,
+and it runs every day after the VirusTotal recheck too, which may have published a draft. Each time,
+it takes the latest published release and, if Hexium doesn't have that version yet:
+
+1. Downloads the release's DLL from GitHub, and checks with `gh attestation verify` that the Release
+   workflow built it: Hexium gets exactly the file players download from GitHub.
+2. Makes the package (`.github/scripts/hexium-package.sh`), the Thunderstore package format: a zip with
+   `manifest.json` (`hexium/manifest.json` with the version added), the 256×256 `assets/icon.png`, the
+   changelog, the DLL, and a README. The README is this repository's down to its install steps, with
+   its images linked on GitHub at the release's tag, followed by `hexium/mod-manager.md` for players
+   with a mod manager.
+3. Uploads it with the team's API token (`.github/scripts/hexium-upload.sh`), the same way Gale uploads
+   modpacks: Hexium's Thunderstore-compatible upload API, into the "Client-only" and "Open Source"
+   categories. Hexium scans each version on VirusTotal before it shows.
+
+A version can only be uploaded once, so a failed upload is retried by the next daily run, or by running
+`gh workflow run hexium.yml`. Versions before 0.4.0 are never uploaded: they kept their settings and
+found cells next to the DLL, and mod managers delete a mod's folder with every update.
 
 Only the mod is released. The hot reload host and injector are development tools, and an injector is
 the kind of program antivirus rightly distrusts.

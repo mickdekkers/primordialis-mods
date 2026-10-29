@@ -314,3 +314,13 @@ jobs:
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$RELEASE_COMMIT" \
             --title "Map Cell Tracker $VERSION" --notes-file notes.md "${draft[@]}" \
             dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip"
+
+  # Publishes the release on Hexium too, unless it's a draft: then the Hexium workflow's daily run
+  # does, once the VirusTotal recheck publishes it.
+  hexium:
+    name: Publish on Hexium
+    needs: publish
+    permissions:
+      contents: read
+      attestations: read # to check the DLL's build attestation
+    uses: $/.github/workflows/hexium.yml
