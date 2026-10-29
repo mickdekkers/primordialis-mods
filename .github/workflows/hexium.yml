@@ -1,0 +1,105 @@
+name: Hexium
+
+# Publishes the latest published release on Hexium (primordialis.hexium.gg), the mod site the Gale mod
+# manager installs Primordialis mods from, if Hexium doesn't have that version yet. The Release
+# workflow runs it after each release, and it runs daily too, after the VirusTotal recheck, which
+# publishes releases that were left as drafts. Hexium gets the DLL that was released on GitHub, after
+# checking its build attestation. See "Hexium" in DEVELOPMENT.md.
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "47 6 * * *"
+
+permissions:
+  contents: read
+
+# One run at a time: a version can only be uploaded once. The upload checks again that Hexium doesn't
+# have the version, in case another run uploaded it after this one looked.
+concurrency:
+  group: hexium
+  cancel-in-progress: false
+
+env:
+  # The team on Hexium that owns the package, and the package's name (as in hexium/manifest.json).
+  HEXIUM_TEAM: mickdekkers
+  HEXIUM_PACKAGE: MapCellTracker
+  # Versions before this one kept their files next to the DLL, which mod managers delete with every
+  # update, so they're never uploaded.
+  FIRST_VERSION: 0.4.0
+
+jobs:
+  find:
+    name: Find a release Hexium doesn't have
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Find it
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 1000 \
+            --json tagName --jq '.[].tagName' | sort -V | tail -n1)
+          version=${latest#v}
+          if [[ -z $latest || $(printf '%s\n' "$FIRST_VERSION" "$version" | sort -V | head -n1) != "$FIRST_VERSION" ]]; then
+            echo "The latest published release (${latest:-none}) is from before $FIRST_VERSION."
+            exit 0
+          fi
+          has=0
+          bash .github/scripts/hexium-has.sh "$HEXIUM_TEAM" "$HEXIUM_PACKAGE" "$version" || has=$?
+          case $has in
+            0) echo "Hexium has $latest already." ;;
+            1) echo "Hexium doesn't have $latest yet."; echo "tag=$latest" >> "$GITHUB_OUTPUT" ;;
+            *) exit 1 ;;
+          esac
+
+  upload:
+    name: Upload
+    needs: find
+    if: needs.find.outputs.tag != ''
+    runs-on: ubuntu-24.04
+    # The environment holding the Hexium team's API token, so that no other job can use it.
+    environment: hexium
+    permissions:
+      contents: read
+      attestations: read # to check the DLL's build attestation
+    env:
+      TAG: ${{ needs.find.outputs.tag }}
+    steps:
+      # What goes in the package with the DLL (the README, changelog and icon) is from the release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.find.outputs.tag }}
+
+      # The DLL players download from GitHub, which the Release workflow built and attested.
+      - name: Download the release's DLL
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern primordialis_qol.dll --dir dist
+          gh attestation verify dist/primordialis_qol.dll --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml"
+
+      - name: Package
+        run: bash .github/scripts/hexium-package.sh "${TAG#v}" dist/primordialis_qol.dll "dist/$HEXIUM_PACKAGE-${TAG#v}.zip"
+
+      - name: Upload
+        env:
+          HEXIUM_API_TOKEN: ${{ secrets.HEXIUM_API_TOKEN }}
+        run: |
+          has=0
+          bash .github/scripts/hexium-has.sh "$HEXIUM_TEAM" "$HEXIUM_PACKAGE" "${TAG#v}" || has=$?
+          case $has in
+            0) echo "Hexium has $TAG already: another run uploaded it."; exit 0 ;;
+            1) ;;
+            *) exit 1 ;;
+          esac
+          bash .github/scripts/hexium-upload.sh "$HEXIUM_TEAM" "dist/$HEXIUM_PACKAGE-${TAG#v}.zip"
