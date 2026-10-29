@@ -1,6 +1,7 @@
-//! Minimal file logger, next to the DLL. Each run of the game gets a new log, and the previous one is
-//! kept as `.log.bak`: after a crash, the log that saw it is still there once the game is started
-//! again. Builds the hot reload host swaps in append to the log of the game they're loaded into.
+//! Minimal file logger, in the game folder. Each run of the game gets a new log, and the previous
+//! one is kept as `.log.bak`: after a crash, the log that saw it is still there once the game is
+//! started again. Builds the hot reload host swaps in append to the log of the game they're loaded
+//! into.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};

@@ -1,6 +1,6 @@
-//! The file the found cells are kept in, next to the DLL (`primordialis_qol_detected.bin`), written
-//! with postcard. Like the game's saves, it holds one run of each kind: the normal run and the
-//! sandbox, each replaced when a new one is started.
+//! The file the found cells are kept in, in the game folder (`primordialis_qol_detected.bin`),
+//! written with postcard. Like the game's saves, it holds one run of each kind: the normal run and
+//! the sandbox, each replaced when a new one is started.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -10,7 +10,7 @@ use std::time::Instant;
 use modkit::{log, storage};
 use serde::{Deserialize, Serialize};
 
-const FILE: &str = "detected.bin";
+pub const FILE: &str = "detected.bin";
 /// Bumped whenever the format changes: a file of another version is started over.
 const VERSION: u32 = 1;
 

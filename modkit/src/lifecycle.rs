@@ -16,13 +16,16 @@ use windows_sys::core::BOOL;
 use crate::feature::{Feature, Features};
 use crate::game::bindings::Bindings;
 use crate::game::symbols;
-use crate::{Result, alloc, events, log, module, settings, storage};
+use crate::{Result, alloc, events, home, log, module, settings, storage};
 
 /// A mod: what `entry!` is given.
 pub struct Mod {
-    /// File name stem, for the log (`<name>.log`), settings (`<name>.toml`) and symbol cache
-    /// (`<name>_cache`), next to the DLL.
+    /// File name stem, for the log (`<name>.log`), settings (`<name>.toml`), symbol cache
+    /// (`<name>_cache`) and storage (`<name>_<suffix>`), in the game folder.
     pub name: &'static str,
+    /// The storage files (their suffixes) that older versions of the mod kept next to its DLL, to
+    /// move into the game folder.
+    pub storage_files: &'static [&'static str],
     /// For people, e.g. in the settings file.
     pub title: &'static str,
     pub version: &'static str,
@@ -152,9 +155,17 @@ fn start_standalone(definition: &'static Mod, loader: &str) {
     ));
 }
 
-/// Everything that doesn't change the game: settings, and finding what to hook. `home` holds the log,
-/// settings and symbol cache. `loader` is what loaded the mod, for the log.
-fn prepare_in(definition: &Mod, home: &Path, loader: &str) -> Result<Prepared> {
+/// Everything that doesn't change the game: settings, and finding what to hook. `dll_dir` is the
+/// folder of the mod's DLL, where it keeps its files if the game folder can't be found. `loader` is
+/// what loaded the mod, for the log.
+fn prepare_in(definition: &Mod, dll_dir: &Path, loader: &str) -> Result<Prepared> {
+    let game_exe = module::path(ptr::null_mut());
+    // Without the game folder, the mod stops below, after the log says why.
+    let home = game_exe
+        .as_deref()
+        .ok()
+        .and_then(Path::parent)
+        .unwrap_or(dll_dir);
     log::init(&home.join(format!("{}.log", definition.name)));
     let location = module::own()
         .and_then(module::path)
@@ -165,6 +176,13 @@ fn prepare_in(definition: &Mod, home: &Path, loader: &str) -> Result<Prepared> {
         definition.version,
         location.as_deref().unwrap_or("an unknown location")
     ));
+    let moved = home::move_old_files(dll_dir, home, definition.name, definition.storage_files);
+    for result in moved {
+        match result {
+            Ok(done) => log::info(&done),
+            Err(error) => log::warn(&error),
+        }
+    }
     storage::init(home, definition.name);
     let features = (definition.features)();
     let declared = features
@@ -178,8 +196,9 @@ fn prepare_in(definition: &Mod, home: &Path, loader: &str) -> Result<Prepared> {
         declared,
     )?;
 
-    let game_exe = module::path(ptr::null_mut())?;
     let game_dir = game_exe
+        .as_deref()
+        .map_err(Clone::clone)?
         .parent()
         .ok_or("game path has no parent directory")?;
     let symbols = symbols::load(game_dir, &home.join(format!("{}_cache", definition.name)))?;

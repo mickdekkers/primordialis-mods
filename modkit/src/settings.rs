@@ -1,5 +1,5 @@
-//! Settings: declared by features, kept in a TOML file next to the DLL, and reloaded whenever the
-//! file changes.
+//! Settings: declared by features, kept in a TOML file in the game folder, and reloaded whenever
+//! the file changes.
 //!
 //! A feature declares each setting as a `static` (e.g. a [`Toggle`]) that it reads directly, and
 //! lists it in [`Feature::settings`](crate::Feature::settings). Every time the file is read, settings
