@@ -63,15 +63,17 @@ To update, close the game and replace `primordialis_qol.dll` with the new one.
 
 **With the Nucleus mod loader:** if your launch option already loads Nucleus, keep it as it is and skip
 step 3. Instead of the game folder, put `primordialis_qol.dll` in a new folder named `primordialis_qol`
-inside Nucleus's `mods` folder (so `mods\primordialis_qol\primordialis_qol.dll`), which keeps the mod's
-own files together. If your mod manager lists which mods are enabled, enable it there. The mod works
-alongside the other Nucleus mods.
+inside Nucleus's `mods` folder (so `mods\primordialis_qol\primordialis_qol.dll`). If your mod manager
+lists which mods are enabled, enable it there. The mod works alongside the other Nucleus mods.
 
-The mod keeps a few files of its own next to `primordialis_qol.dll`: its settings
+The mod keeps a few files of its own in the game folder, next to `primordialis.exe`: its settings
 (`primordialis_qol.toml`), a log (`primordialis_qol.log`, and the one from the time before in
 `primordialis_qol.log.bak`), the cells you've found in your current run and sandbox
 (`primordialis_qol_detected.bin`), and a `primordialis_qol_cache` folder (about 10 MB) with the debug
-information it reads from the game.
+information it reads from the game. They're there however the mod is loaded, also with Nucleus or a mod
+manager, so your settings and found cells stay when you update the mod or load it another way. Versions
+before 0.4.0 loaded with Nucleus kept them next to `primordialis_qol.dll`: the first time a newer version
+starts, it moves your settings and found cells into the game folder.
 
 ## Is it safe?
 
@@ -101,7 +103,7 @@ latest results.
 
 ## Settings
 
-To change a setting, open `primordialis_qol.toml` (next to `primordialis_qol.dll`) with Notepad,
+To change a setting, open `primordialis_qol.toml` (in the game folder) with Notepad,
 change `true` to `false` (or back), and save. Changes apply right away, even while the game is running.
 Everything is on by default.
 
@@ -119,7 +121,7 @@ move around a little first.
 
 If there are still none, look at the bottom-left corner of the main menu: with the mod loaded, it shows
 "Map Cell Tracker" and its version under the game's version. If it doesn't, look for `primordialis_qol.log`
-next to `primordialis_qol.dll`:
+in the game folder:
 
 - **There's no log:** the game didn't load the mod. Check that `primordialis_qol.dll` is right next to
   `primordialis.exe`, and that the launch option is exactly as above, quotes included. With Nucleus,
@@ -129,16 +131,16 @@ next to `primordialis_qol.dll`:
 
 **Reporting a problem.** Please [open an issue](../../issues) and attach `primordialis_qol.log`. If
 you've started the game again since (after a crash, say), attach `primordialis_qol.log.bak` instead:
-each start moves the last log there. The log shows where your game is installed, but nothing else
-about you or your PC.
+each start moves the last log there. The log shows where the game and the mod are installed (which can
+include your Windows user name), but nothing else about you or your PC.
 
 ## Uninstall
 
-Remove the launch option. You can then delete `primordialis_qol.dll`, `primordialis_qol.toml`,
-`primordialis_qol.log`, `primordialis_qol.log.bak`, `primordialis_qol_detected.bin` and the
-`primordialis_qol_cache` folder from the game folder.
+Remove the launch option and delete `primordialis_qol.dll` from the game folder. With Nucleus, keep the
+launch option and delete the `mods\primordialis_qol` folder instead.
 
-With Nucleus, keep the launch option and delete the `mods\primordialis_qol` folder.
+You can then delete the mod's files from the game folder: `primordialis_qol.toml`, `primordialis_qol.log`,
+`primordialis_qol.log.bak`, `primordialis_qol_detected.bin` and the `primordialis_qol_cache` folder.
 
 ## Compatibility
 

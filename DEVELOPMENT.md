@@ -75,7 +75,7 @@ themselves.
 | Crate | What it is |
 |---|---|
 | `primordialis_qol` (`src/`) | The mod: just its features. `map_icons.rs` draws the icons of the cells `found_cells/` says the player has found (with `spread/` laying out the grid, `fades.rs`, `leaders.rs` and `combo.rs`), `hide_duplicates.rs` hides what the map already shows, `echolocation.rs` fixes the Echolocation markers, and `menu_version.rs` shows the mod's version in the menus. Shared between them: `settle.rs` caches where pickups end up, `grid_pickups.rs` holds the pickups on the grid, `pickup_edits.rs` undoes changes to pickups, and `math.rs` has easing and timing. |
-| `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing, menus and tooltips), resolved from the game's symbols, and the values copied from the game's code. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings, logging, and the files kept next to the DLL. |
+| `modkit` (`modkit/`) | The framework. `game/` holds safe bindings to the game (pickups, materials, map, camera, drawing, menus and tooltips), resolved from the game's symbols, and the values copied from the game's code. Beneath that sit loading, hooking and unhooking the running game, the mod's private heap, settings, logging, and the mod's files in the game folder. |
 | `modkit_protocol` (`protocol/`) | The entry points the mod exports for the hot reload host, shared by both. |
 | `primordialis_qol_hot_reload` (`hot_reload/`) | The hot reload host and injector (development only, never released). |
 
@@ -182,7 +182,9 @@ the host with `primordialis_qol_inject.exe`, and keep the mod out of Nucleus's `
 would start that copy as well.
 
 The host loads copies of the mod from `target\release\hot_reload\`, so builds can overwrite the
-original. It logs to `primordialis_qol_hot_reload.log`; the mod keeps logging to `primordialis_qol.log`.
+original. It logs to `primordialis_qol_hot_reload.log`, next to itself; the mod keeps logging to
+`primordialis_qol.log` in the game folder, and uses the same settings and found cells as every other
+copy of the mod.
 
 - Hooks are only patched while the game's other threads are paused, and none of them is executing the
   code being patched. Before a build is unloaded, the host also waits until no thread is inside it.

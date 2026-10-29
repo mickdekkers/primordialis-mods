@@ -17,8 +17,9 @@ pub const HOST_MODULE: &str = "primordialis_qol_hot_reload.dll";
 /// `extern "C" fn() -> u32`: returns `API_VERSION`. Has this signature in every version.
 pub const EXPORT_API_VERSION: &CStr = c"modkit_api_version";
 /// `unsafe extern "C" fn(home_dir: *const u16, home_dir_len: usize) -> bool`: loads settings and
-/// finds what to hook, without changing the game. `home_dir` (UTF-16, not NUL-terminated) holds the
-/// log, settings and caches. Returns whether `EXPORT_START` can be called; if not, unload the mod.
+/// finds what to hook, without changing the game. `home_dir` (UTF-16, not NUL-terminated) is the
+/// folder of the mod's build, where it keeps its files if it can't find the game folder. Returns
+/// whether `EXPORT_START` can be called; if not, unload the mod.
 pub const EXPORT_PREPARE: &CStr = c"modkit_prepare";
 /// `extern "C" fn() -> bool`: hooks the game. Returns whether the mod is active; if not, none of its
 /// code runs and it can be unloaded.

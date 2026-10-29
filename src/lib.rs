@@ -24,6 +24,7 @@ mod spread;
 
 modkit::entry!(modkit::Mod {
     name: "primordialis_qol",
+    storage_files: &[found_cells::FILE],
     title: "Map Cell Tracker",
     version: env!("CARGO_PKG_VERSION"),
     homepage: env!("CARGO_PKG_REPOSITORY"),

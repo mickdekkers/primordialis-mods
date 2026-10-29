@@ -14,6 +14,7 @@ use modkit::log;
 use rustc_hash::FxHashMap;
 
 use crate::math;
+pub use store::FILE;
 use store::{Cell, Run, Slot, Store};
 
 /// How close the player has to get to a cell in total darkness to find it, in world units. Our

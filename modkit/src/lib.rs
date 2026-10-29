@@ -10,9 +10,11 @@
 //!   the mod stays off and the game runs unmodified.
 //! - **Hooks**: installed and removed while the game runs, only when no thread is executing the code
 //!   being patched, and removed only once no thread is inside the mod.
-//! - **Settings** ([`settings`]): declared by features, kept in a TOML file next to the DLL that is
-//!   completed with documented defaults and reloaded when it changes.
-//! - **Storage** ([`storage`]): where features keep files of their own, next to the DLL.
+//! - **Settings** ([`settings`]): declared by features, kept in a TOML file that is completed with
+//!   documented defaults and reloaded when it changes.
+//! - **Storage** ([`storage`]): where features keep files of their own.
+//! - **Files**: the log, settings, symbol cache and storage are kept in the game folder, shared by
+//!   every copy of the mod wherever its DLL is.
 //! - **Isolation**: a feature that panics is turned off (and its changes undone) while the rest keep
 //!   running. The mod allocates from its own heap, freed when the mod is unloaded.
 //!
@@ -25,6 +27,7 @@ mod events;
 mod feature;
 mod freeze;
 pub mod game;
+mod home;
 mod hook;
 mod lifecycle;
 pub mod log;
@@ -50,6 +53,7 @@ static TEST_ALLOCATOR: alloc::PrivateHeap = alloc::PrivateHeap;
 /// ```ignore
 /// modkit::entry!(modkit::Mod {
 ///     name: "my_mod",
+///     storage_files: &[],
 ///     title: "My mod",
 ///     version: env!("CARGO_PKG_VERSION"),
 ///     homepage: env!("CARGO_PKG_REPOSITORY"),

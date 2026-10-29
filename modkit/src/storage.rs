@@ -1,5 +1,5 @@
-//! Files a mod keeps for itself, next to its DLL like its log and settings: named after the mod, so
-//! that they're easy to tell apart in the game folder.
+//! Files a mod keeps for itself, in the game folder like its log and settings: named after the mod, so
+//! that they're easy to tell apart wherever they end up.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
