@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.0 (2026-10-30)
+
+### Added
+
+- The mod is on Hexium, so mod managers like Gale can install and update it, together with the Nucleus mod loader it needs. Each release on GitHub also comes with the package mod managers install.
 ## 0.4.0 (2026-10-29)
 
 ### Changed
