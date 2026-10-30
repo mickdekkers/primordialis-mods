@@ -172,6 +172,9 @@ jobs:
       # Attesting the DLL happens in this job, not the build, which runs the dependencies' build scripts.
       id-token: write # to get the Sigstore certificate that signs the release files' attestation
       attestations: write # to store the attestation with the repository
+    outputs:
+      # Whether the release was published, rather than left as a draft.
+      clean: ${{ steps.scan.outputs.clean }}
     env:
       VERSION: ${{ needs.build.outputs.version }}
       COMMIT: ${{ needs.build.outputs.commit }}
@@ -329,13 +332,14 @@ jobs:
             dist/primordialis_qol.dll "dist/primordialis_qol-$VERSION-debug-symbols.zip" \
             "dist/primordialis_qol-$VERSION-hexium.zip"
 
-  # Publishes the release on Hexium too, unless it's a draft: then the Hexium workflow's daily run
-  # does, once the VirusTotal recheck publishes it. The Hexium workflow runs on its own rather than
-  # being called from here: a called workflow's job didn't get its environment's secrets.
-  # Unlike other events, a workflow_dispatch made with GITHUB_TOKEN does start a run.
+  # Publishes the release on Hexium too, unless it's a draft: then the VirusTotal recheck does, once it
+  # publishes the draft. The Hexium workflow runs on its own rather than being called from here: a
+  # called workflow's job didn't get its environment's secrets. Unlike other events, a
+  # workflow_dispatch made with GITHUB_TOKEN does start a run.
   hexium:
     name: Start the Hexium upload
     needs: publish
+    if: needs.publish.outputs.clean == 'true'
     runs-on: ubuntu-24.04
     permissions:
       actions: write # to start the Hexium workflow

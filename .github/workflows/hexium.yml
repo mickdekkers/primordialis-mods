@@ -2,13 +2,11 @@ name: Hexium
 
 # Publishes the latest published release on Hexium (primordialis.hexium.gg), the mod site the Gale mod
 # manager installs Primordialis mods from, if Hexium doesn't have that version yet. The Release
-# workflow starts it after each release, and it runs daily too, after the VirusTotal recheck, which
-# publishes releases that were left as drafts. It uploads the package the Release workflow made and
+# workflow starts it after publishing a release, and the VirusTotal recheck after publishing one that
+# was left as a draft. Run it by hand to retry a failed upload. It uploads the package the Release workflow made and
 # released with the DLL, after checking its build attestation. See "Hexium" in DEVELOPMENT.md.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "47 6 * * *"
 
 permissions:
   contents: read

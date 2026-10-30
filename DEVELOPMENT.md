@@ -278,7 +278,7 @@ scanned again, though, so the VirusTotal recheck workflow (`virustotal-recheck.y
   marked with HTML comments for this.
 - If no engine flags it any more, it publishes the draft, which creates its tag, and links the README's
   badge to the report. Like the release commit, that commit is made by the release App and signed by
-  GitHub.
+  GitHub. Then it starts the upload to [Hexium](#hexium).
 - If the DLL is still flagged two weeks after the release was made, one run fails, so GitHub sends a
   notification. That's the time to look at the report: for a false positive, the engine's vendor
   usually takes reports (Microsoft's is the [WDSI submission
@@ -311,10 +311,10 @@ without a PDB for moderator review. The README is this repository's down to its 
 its images linked on GitHub at the release's tag, followed by `hexium/mod-manager.md` for players with
 a mod manager.
 
-The Hexium workflow (`hexium.yml`) does the upload. The Release workflow starts it at its end (as a run
-of its own: called from the Release workflow, its job didn't get the `hexium` environment's API token),
-and it runs every day after the VirusTotal recheck too, which may have published a draft. Each time, it
-takes the latest published release and, if Hexium doesn't have that version yet:
+The Hexium workflow (`hexium.yml`) does the upload. The Release workflow starts it once it has published
+the release, and the VirusTotal recheck once it has published a draft. It runs on its own rather than
+being called from them: called from the Release workflow, its job didn't get the `hexium` environment's
+API token. It takes the latest published release and, if Hexium doesn't have that version yet:
 
 1. Downloads the release's package from GitHub, and checks with `gh attestation verify` that the
    Release workflow made it: Hexium gets exactly the file released on GitHub.
@@ -324,8 +324,8 @@ takes the latest published release and, if Hexium doesn't have that version yet:
    `hexium.gg`, Hexium doesn't find the Nucleus dependency. Hexium scans each version on VirusTotal
    before it shows.
 
-A version can only be uploaded once, so a failed upload is retried by the next daily run, or by running
-`gh workflow run hexium.yml`. Versions before 0.4.0 are never uploaded: they kept their settings and
+A version can only be uploaded once, and nothing retries a failed upload: run
+`gh workflow run hexium.yml` to try again. Versions before 0.4.0 are never uploaded: they kept their settings and
 found cells next to the DLL, and mod managers delete a mod's folder with every update. 0.4.0 was
 uploaded by hand, before releases came with the package.
 

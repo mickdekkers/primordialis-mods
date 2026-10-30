@@ -5,8 +5,8 @@ name: VirusTotal recheck
 # usually fixes its signatures within days, but VirusTotal's report keeps the old verdict until the file
 # is scanned again, so every day this asks for a rescan of the newest draft's DLL. If it's still flagged
 # two weeks after the release, one run fails, so that GitHub sends a notification; the daily rescans go
-# on after that. It also keeps the README's VirusTotal badge linked to the latest published release.
-# See "Releasing" in DEVELOPMENT.md.
+# on after that. A release it publishes then goes to Hexium. It also keeps the README's VirusTotal
+# badge linked to the latest published release. See "Releasing" in DEVELOPMENT.md.
 on:
   schedule:
     - cron: "17 6 * * *"
@@ -80,6 +80,8 @@ jobs:
     environment: release
     permissions:
       contents: write # to edit the draft's notes and publish it, which creates its tag
+    outputs:
+      published: ${{ steps.release.outputs.published }}
     env:
       TAG: ${{ needs.find.outputs.draft }}
     steps:
@@ -198,3 +200,19 @@ jobs:
         run: |
           echo "::error::VirusTotal still flags the DLL of $TAG, $DAYS days after the release was made, so it's still a draft. The release notes link to the report. The daily rescans go on, and publish it once one is clean."
           exit 1
+
+  # A release published here goes to Hexium too, as the Release workflow's do. Also if a later step
+  # failed, such as linking the README: the release is out either way. The Hexium workflow runs on its
+  # own, as from the Release workflow, where it says why.
+  hexium:
+    name: Start the Hexium upload
+    needs: publish
+    if: ${{ !cancelled() && needs.publish.outputs.published == 'true' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write # to start the Hexium workflow
+    steps:
+      - name: Start it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run hexium.yml --repo "$GITHUB_REPOSITORY" --ref main
