@@ -162,12 +162,15 @@ These keep hooking and unloading safe while the game runs:
 - The publishing job attests the DLL's build provenance (`actions/attest`), so players can check a
   download with `gh attestation verify`. Only that job gets `id-token: write`, never the build, which
   runs the dependencies' build scripts.
-- Each published release also goes to Hexium (`.github/workflows/hexium.yml`, run by the Release
-  workflow and daily), the mod site the Gale mod manager uses: the release's DLL, after checking its
-  attestation, packaged with `hexium/` (`.github/scripts/hexium-package.sh`). Hexium versions can't be
-  replaced, so it only ever uploads a version that's on GitHub already.
-- Only `primordialis_qol.dll` (and a zip of its PDB) is released, never the hot reload host or injector.
-  Its file name is what players type in the launch option, so it never changes.
+- Each published release also goes to Hexium, the mod site the Gale mod manager uses
+  (`.github/workflows/hexium.yml`, started by the Release workflow, or by the VirusTotal recheck when
+  it publishes a draft). It uploads the package the Release workflow made
+  (`.github/scripts/hexium-package.sh`: the DLL and PDB with `hexium/`), released and attested with the
+  DLL, after checking its attestation. Hexium versions can't be replaced, so it only ever uploads a
+  version that's on GitHub already.
+- Only `primordialis_qol.dll` (with a zip of its PDB, and its package for Hexium) is released, never
+  the hot reload host or injector. Its file name is what players type in the launch option, so it never
+  changes.
 - Release builds strip local paths with `--remap-path-prefix`, and `.github/scripts/check-paths.ps1`
   fails the release unless every path in the DLL has an expected form (an allowlist, not a search for
   known names). Local builds contain the home folder of whoever built them, so they are never

@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Makes the mod's package for Hexium, the mod site the Gale mod manager installs Primordialis mods from
-# (the Thunderstore package format): a zip holding manifest.json, icon.png, README.md, CHANGELOG.md and
-# the DLL. Run it from a checkout of the release's tag, so that what goes with the DLL is from the same
-# version.
+# (the Thunderstore package format): a zip holding manifest.json, icon.png, README.md, CHANGELOG.md, the
+# DLL and its PDB. Hexium holds native DLLs without a PDB for moderator review. The Release workflow
+# runs it from the release commit, so that what goes with the DLL is from the same version, and
+# releases the package with the DLL.
 #
 # The manifest is hexium/manifest.json with the version added. The README is the repository's, from the
 # title down to the install steps (with its images linked on GitHub, at the tag), followed by
 # hexium/mod-manager.md, which takes the install steps' place for players with a mod manager.
 #
-# Usage: hexium-package.sh <version> <primordialis_qol.dll> <zip output>
+# Usage: hexium-package.sh <version> <primordialis_qol.dll> <primordialis_qol.pdb> <zip output>
 set -euo pipefail
 
 version=$1
 dll=$2
-out=$3
+pdb=$3
+out=$4
 repo=https://github.com/mickdekkers/primordialis-mods
 tag="v$version"
 
@@ -54,8 +56,9 @@ sed -e "s#{{repo}}#$repo#g" -e "s#{{tag}}#$tag#g" hexium/mod-manager.md >> "$sta
 
 cp CHANGELOG.md "$stage/CHANGELOG.md"
 cp "$dll" "$stage/primordialis_qol.dll"
+cp "$pdb" "$stage/primordialis_qol.pdb"
 
 rm -f "$out"
 out=$(realpath "$out")
-(cd "$stage" && zip -q -X "$out" manifest.json icon.png README.md CHANGELOG.md primordialis_qol.dll)
+(cd "$stage" && zip -q -X "$out" manifest.json icon.png README.md CHANGELOG.md primordialis_qol.dll primordialis_qol.pdb)
 unzip -l "$out"
